@@ -4,13 +4,14 @@ JobRadar is a personal job-search intelligence system for Akash Biswal. It will 
 
 ## Current delivery status
 
-Step 1 of 10 is complete: repository documentation, environment-variable contract, Git exclusions, and pinned Python dependencies are defined. Application code is intentionally added only in the numbered build order below.
+Step 3 of 11 is complete: the repository foundation, SQLite migrations, and validated structured resume catalog are implemented. Application code is intentionally added only in the numbered build order below.
 
 ## Architecture
 
 | Component | Responsibility | Technology |
 | --- | --- | --- |
 | Browser extension | Extract job postings, request scores, and render actions | Chrome/Edge MV3, vanilla JavaScript |
+| Web dashboard | Review scored jobs and manage application lifecycle state | Responsive HTML, CSS, and vanilla JavaScript |
 | Backend API | Validate requests, scan hard filters, score roles, and persist events | Python 3.12, FastAPI, Uvicorn |
 | Scoring providers | Produce structured scoring with a local fallback | Gemini 2.5 Pro, Ollama Qwen 2.5 7B |
 | Persistence | Store discovered, viewed, skipped, and applied roles | SQLite, aiosqlite |
@@ -28,9 +29,10 @@ I am using one shared Python scoring engine for the extension and discovery agen
 5. Gemini/Ollama scoring engine and unit tests
 6. FastAPI backend, `/api/score`, and `/health`
 7. Chrome/Edge extension: manifest, content parser, popup, and background worker
-8. Discovery, outreach, and email-digest agent
-9. Integration tests
-10. Final setup, operation, and troubleshooting documentation
+8. Standalone web dashboard for scores and application lifecycle management
+9. Discovery, outreach, and email-digest agent
+10. Integration tests
+11. Final setup, operation, and troubleshooting documentation
 
 ## Absolute-zero Windows setup
 
