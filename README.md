@@ -4,7 +4,7 @@ JobRadar is a personal job-search intelligence system for Akash Biswal. It will 
 
 ## Current delivery status
 
-Step 3 of 11 is complete: the repository foundation, SQLite migrations, and validated structured resume catalog are implemented. Application code is intentionally added only in the numbered build order below.
+Step 4 of 11 is complete: the repository foundation, SQLite migrations, validated resume catalog, and deterministic hard-filter scanner are implemented. Application code is intentionally added only in the numbered build order below.
 
 ## Architecture
 
@@ -25,7 +25,7 @@ I am using one shared Python scoring engine for the extension and discovery agen
 1. Repository foundation: `README.md`, `.env.example`, `.gitignore`, and `requirements.txt`
 2. Database schema and migrations: `backend/database.py`
 3. Structured resume catalog: `backend/resume_store.py`
-4. Rule-based red-flag scanner and unit tests
+4. Rule-based red-flag scanner and unit tests: `backend/red_flag_scanner.py`
 5. Gemini/Ollama scoring engine and unit tests
 6. FastAPI backend, `/api/score`, and `/health`
 7. Chrome/Edge extension: manifest, content parser, popup, and background worker
