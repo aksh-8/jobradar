@@ -4,7 +4,7 @@ JobRadar is a personal job-search intelligence system for Akash Biswal. It combi
 
 ## Current delivery status
 
-Step 11 is in progress: the ignored private catalog contains four READY resume variants, and setup, operation, troubleshooting, audit, two-hour scheduling, per-run scoring limits, and local failure monitoring are implemented. Remaining real-world gates are provider credentials, one live discovery/email test, and Task Scheduler registration.
+Step 11 is complete. The private catalog contains four READY resume variants, provider credentials are configured locally, live discovery and Gmail delivery have been validated, and `JobRadar Discovery - Every 2 Hours` is registered in Windows Task Scheduler. Setup, operation, troubleshooting, audit, per-run scoring limits, and local failure monitoring are documented and operational.
 
 ## Architecture
 
