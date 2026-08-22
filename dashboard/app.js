@@ -3,6 +3,8 @@
 const state = { jobs: [], status: "ALL", search: "" };
 const jobsElement = document.getElementById("jobs");
 const notice = document.getElementById("notice");
+const urlScoreForm = document.getElementById("url-score-form");
+const urlScoreResult = document.getElementById("url-score-result");
 
 function showNotice(message = "") {
   notice.textContent = message;
@@ -50,6 +52,9 @@ function render() {
     card.querySelector(".status").textContent = job.status;
     card.querySelector(".open-job").href = job.url;
     const scoreDetails = details(job);
+    card.querySelector(".resume-note strong").textContent = scoreDetails.recommended_resume
+      || scoreDetails.resume_profile_id
+      || "Not recorded";
     const dimensions = scoreDetails.dimensions || {};
     card.querySelector(".signals").replaceChildren(...Object.entries(dimensions).map(([name, value]) => {
       const signal = document.createElement("span");
@@ -60,12 +65,49 @@ function render() {
     card.querySelector(".rationale").textContent = (scoreDetails.rationale || []).join(" ")
       || "No scoring rationale is available.";
     for (const button of card.querySelectorAll("button[data-action]")) {
-      button.disabled = button.dataset.action === job.status;
+      const isCurrentStatus = button.dataset.action === job.status;
+      button.disabled = isCurrentStatus;
+      button.classList.toggle("current", isCurrentStatus);
       button.addEventListener("click", () => changeStatus(job.id, button.dataset.action));
     }
     jobsElement.append(card);
   }
   updateMetrics();
+}
+
+function showUrlScoreResult(message = "", isError = false) {
+  urlScoreResult.textContent = message;
+  urlScoreResult.classList.toggle("error", isError);
+  urlScoreResult.classList.toggle("hidden", !message);
+}
+
+async function scoreJobUrl(event) {
+  event.preventDefault();
+  const button = document.getElementById("score-url");
+  const url = document.getElementById("job-url").value.trim();
+  if (!url) return;
+
+  button.disabled = true;
+  button.textContent = "Scoring…";
+  showUrlScoreResult("Reading the job page and choosing the best resume…");
+  try {
+    const response = await fetch("/api/score-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, profile_id: "auto" }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || "Could not score this job page.");
+    const resume = body.recommended_resume || body.resume_profile_id || "recommended profile";
+    showUrlScoreResult(`Scored ${body.overall_score}/100. Apply with ${resume}.`);
+    urlScoreForm.reset();
+    await loadJobs();
+  } catch (error) {
+    showUrlScoreResult(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Score job";
+  }
 }
 
 async function loadJobs() {
@@ -106,6 +148,7 @@ async function changeStatus(jobId, status) {
 }
 
 document.getElementById("refresh").addEventListener("click", loadJobs);
+urlScoreForm.addEventListener("submit", scoreJobUrl);
 document.getElementById("search").addEventListener("input", (event) => {
   state.search = event.target.value.trim();
   render();

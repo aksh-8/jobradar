@@ -20,6 +20,17 @@ h1 { font-family: Georgia, "Times New Roman", serif; font-size: clamp(42px, 6vw,
 .metrics article:last-child { border-radius: 0 12px 12px 0; }
 .metrics span { color: #687168; display: block; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .metrics strong { display: block; font-family: Georgia, serif; font-size: 34px; font-weight: 500; margin-top: 8px; }
+.url-scorer { align-items: center; background: #173f2c; border-radius: 16px; color: #fff; display: grid; gap: 22px 30px; grid-template-columns: minmax(250px, .85fr) minmax(360px, 1.15fr); margin-bottom: 24px; padding: 25px 28px; }
+.url-scorer .eyebrow { color: #9fd0b4; margin: 0 0 7px; }
+.url-scorer h2 { font-size: 25px; }
+.url-scorer-copy > p:last-child { color: #c6d6cc; font-size: 13px; line-height: 1.5; margin: 7px 0 0; max-width: 520px; }
+.url-score-form { display: flex; gap: 8px; }
+.url-score-form input { background: #fff; border: 1px solid transparent; border-radius: 9px; color: #172019; min-width: 0; padding: 12px 13px; width: 100%; }
+.url-score-form input:focus { outline: 3px solid rgba(159, 208, 180, .45); }
+.url-score-form button { background: #d5a544; border: 0; border-radius: 9px; color: #172019; cursor: pointer; flex: 0 0 auto; font-weight: 800; padding: 12px 17px; }
+.url-score-form button:disabled { cursor: wait; opacity: .7; }
+.url-score-result { color: #cfe9d9; font-size: 12px; grid-column: 2; margin-top: -13px; }
+.url-score-result.error { color: #ffd7ce; }
 .workspace { background: #fff; border: 1px solid #dedfd8; border-radius: 16px; box-shadow: 0 18px 50px rgba(29, 41, 33, .06); padding: 22px; }
 .toolbar { align-items: center; display: flex; gap: 16px; justify-content: space-between; margin-bottom: 8px; }
 .filters { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -35,14 +46,17 @@ h1 { font-family: Georgia, "Times New Roman", serif; font-size: clamp(42px, 6vw,
 .company { color: #687168; font-size: 12px; font-weight: 700; margin: 0 0 4px; text-transform: uppercase; }
 h2 { font-family: Georgia, serif; font-size: 24px; font-weight: 500; margin: 0; }
 .status { background: #f0f0eb; border-radius: 999px; color: #525b54; font-size: 10px; font-weight: 800; padding: 6px 9px; }
+.resume-note { align-items: center; color: #264f39; display: flex; font-size: 12px; gap: 7px; margin: 11px 0 0; }
+.resume-note span { color: #708077; font-size: 9px; font-weight: 800; letter-spacing: .11em; }
+.resume-note strong { font-weight: 750; }
 .signals { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .signal { background: #f3f5f2; border-radius: 5px; color: #57625a; font-size: 11px; padding: 5px 7px; }
 .rationale { color: #59645c; font-size: 13px; line-height: 1.55; margin: 13px 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.actions button.primary { background: #1d6b47; border-color: #1d6b47; color: #fff; }
+.actions button.current { background: #1d6b47; border-color: #1d6b47; color: #fff; }
 .notice { background: #fff4d8; border-radius: 8px; color: #705008; margin: 14px 0; padding: 10px 12px; }
 .empty { color: #677168; padding: 70px 20px; text-align: center; }
 .empty strong { color: #28332b; font-family: Georgia, serif; font-size: 25px; }
 .hidden, .job-card.hidden { display: none; }
 .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; clip: rect(0, 0, 0, 0); }
-@media (max-width: 720px) { main { padding-top: 38px; } .hero { align-items: start; flex-direction: column; gap: 24px; } .metrics { grid-template-columns: repeat(2, 1fr); } .metrics article:first-child, .metrics article:last-child { border-radius: 0; } .toolbar { align-items: stretch; flex-direction: column; } .search input { width: 100%; } .job-card { grid-template-columns: 58px 1fr; } .score { height: 58px; } .job-heading { flex-direction: column; } }
+@media (max-width: 720px) { main { padding-top: 38px; } .hero { align-items: start; flex-direction: column; gap: 24px; } .metrics { grid-template-columns: repeat(2, 1fr); } .metrics article:first-child, .metrics article:last-child { border-radius: 0; } .url-scorer { align-items: stretch; grid-template-columns: 1fr; padding: 22px; } .url-score-form { flex-direction: column; } .url-score-result { grid-column: 1; margin-top: -11px; } .toolbar { align-items: stretch; flex-direction: column; } .search input { width: 100%; } .job-card { grid-template-columns: 58px 1fr; } .score { height: 58px; } .job-heading { flex-direction: column; } }

@@ -5,12 +5,16 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from ipaddress import ip_address
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, HttpUrl
+
+from agent.posting_extractor import PostingExtractionError, PostingExtractor
+from agent.search_providers import SearchResult
 
 from backend.database import LATEST_SCHEMA_VERSION, database_connection, initialize_database
 from backend.job_store import (
@@ -57,6 +61,13 @@ class ScoreRequest(ApiModel):
     url: str | None = None
 
 
+class UrlScoreRequest(ApiModel):
+    """A public job page to extract, score, and save."""
+
+    url: HttpUrl
+    profile_id: str = AUTO_PROFILE_ID
+
+
 class ScoreResponse(ScoringResult):
     """Scoring outcome with an ID when the caller supplied a job URL."""
 
@@ -96,11 +107,36 @@ def _cors_origins() -> list[str]:
     return origins or ["*"]
 
 
+def _validate_public_job_url(url: HttpUrl) -> str:
+    """Reject obvious local-network targets from the URL-fetching endpoint."""
+
+    hostname = (url.host or "").casefold().rstrip(".")
+    if hostname == "localhost" or hostname.endswith(
+        (".localhost", ".local", ".internal")
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a public job-posting URL.",
+        )
+    try:
+        address = ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        if not address.is_global:
+            raise HTTPException(
+                status_code=422,
+                detail="Enter a public job-posting URL.",
+            )
+    return str(url)
+
+
 def create_app(
     *,
     database_path: str | Path | None = None,
     scoring_engine: ScoringEngine | None = None,
     resume_catalog: ResumeCatalog | None = None,
+    posting_extractor: PostingExtractor | None = None,
 ) -> FastAPI:
     """Build an application with replaceable dependencies for isolated tests."""
 
@@ -117,6 +153,7 @@ def create_app(
     )
     application.state.scoring_engine = scoring_engine or create_default_scoring_engine()
     application.state.resume_catalog = resume_catalog or configured_resume_catalog()
+    application.state.posting_extractor = posting_extractor or PostingExtractor()
     application.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -241,6 +278,41 @@ def _build_routes():
                 database_path=request.app.state.database_path,
             )
         return ScoreResponse(**result.model_dump(), job_id=job_id)
+
+    @router.post("/api/score-url", response_model=ScoreResponse)
+    async def score_job_url(
+        payload: UrlScoreRequest,
+        request: Request,
+    ) -> ScoreResponse:
+        url = _validate_public_job_url(payload.url)
+        extractor: PostingExtractor = request.app.state.posting_extractor
+        try:
+            posting = await extractor.fetch(
+                SearchResult(
+                    title="Job posting",
+                    url=url,
+                    source="dashboard-url",
+                )
+            )
+        except PostingExtractionError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Could not read this job page: {error} "
+                    "If the site blocks automated access, open it and use the "
+                    "JobRadar browser extension instead."
+                ),
+            ) from error
+
+        return await score_job(
+            ScoreRequest(
+                posting=posting,
+                profile_id=payload.profile_id,
+                source="dashboard-url",
+                url=url,
+            ),
+            request,
+        )
 
     return router
 

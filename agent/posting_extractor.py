@@ -12,6 +12,16 @@ from bs4 import BeautifulSoup
 from agent.search_providers import SearchResult
 from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
 
+PUBLIC_PAGE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 
 class PostingExtractionError(RuntimeError):
     """Raised when a result page lacks the facts required for safe scoring."""
@@ -54,7 +64,7 @@ class PostingExtractor:
                 transport=self.transport,
                 timeout=self.timeout_seconds,
                 follow_redirects=True,
-                headers={"User-Agent": "JobRadar/0.1 (+personal job discovery)"},
+                headers=PUBLIC_PAGE_HEADERS,
             ) as client:
                 response = await client.get(result.url)
                 response.raise_for_status()
@@ -82,8 +92,10 @@ def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
             soup,
             (
                 "[data-company-name]",
+                ".companyInfo",
                 "[class*='company-name']",
                 "[class*='companyName']",
+                "[class*='company-info']",
             ),
         )
     description = _html_text(structured.get("description")) or _first_text(
@@ -112,12 +124,21 @@ def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
 
     salary = _salary(structured.get("baseSalary"))
     location, workplace_type = _location(structured)
+    location = location or result.location or _first_text(
+        soup,
+        (
+            "[data-job-location]",
+            ".job-location",
+            "[class*='jobLocation']",
+            ".loc",
+        ),
+    )
     searchable = f"{title}\n{company}\n{description}"
     return JobPostingFacts(
         title=title,
         company=company,
         description=description,
-        location=location or result.location,
+        location=location,
         employment_type=_employment_type(structured.get("employmentType")),
         workplace_type=workplace_type,
         date_posted=_text(structured.get("datePosted")) or None,

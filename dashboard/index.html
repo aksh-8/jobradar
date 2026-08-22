@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review JobRadar scores and manage applications.">
     <title>JobRadar Dashboard</title>
-    <link rel="stylesheet" href="app.css">
+    <link rel="stylesheet" href="app.css?v=20260822-2">
   </head>
   <body>
     <header class="site-header">
@@ -33,6 +33,20 @@
         <article><span>Average score</span><strong id="metric-average">—</strong></article>
       </section>
 
+      <section class="url-scorer" aria-labelledby="url-scorer-title">
+        <div class="url-scorer-copy">
+          <p class="eyebrow">QUICK SCORE</p>
+          <h2 id="url-scorer-title">Score a job from its link</h2>
+          <p>Paste a public job page. JobRadar will read it, choose the best resume, score it, and add it below.</p>
+        </div>
+        <form id="url-score-form" class="url-score-form">
+          <label for="job-url" class="sr-only">Job posting URL</label>
+          <input id="job-url" name="url" type="url" inputmode="url" autocomplete="url" placeholder="https://company.com/jobs/role" required>
+          <button id="score-url" type="submit">Score job</button>
+        </form>
+        <div id="url-score-result" class="url-score-result hidden" role="status" aria-live="polite"></div>
+      </section>
+
       <section class="workspace">
         <div class="toolbar">
           <div class="filters" role="group" aria-label="Filter by status">
@@ -52,7 +66,7 @@
         <div id="jobs" class="jobs" aria-live="polite"></div>
         <div id="empty" class="empty hidden">
           <strong>No matching jobs</strong>
-          <p>Score a posting with the browser extension, then refresh this page.</p>
+          <p>Paste a job link above or score the active page with the browser extension.</p>
         </div>
       </section>
     </main>
@@ -65,17 +79,18 @@
             <div><p class="company"></p><h2></h2></div>
             <span class="status"></span>
           </div>
+          <p class="resume-note"><span>USE RESUME</span><strong></strong></p>
           <div class="signals"></div>
           <p class="rationale"></p>
           <div class="actions">
             <a class="open-job" target="_blank" rel="noopener noreferrer">Open job</a>
             <button data-action="VIEWED" type="button">Mark viewed</button>
-            <button data-action="APPLIED" class="primary" type="button">Applied</button>
+            <button data-action="APPLIED" type="button">Applied</button>
             <button data-action="SKIPPED" type="button">Skip</button>
           </div>
         </div>
       </article>
     </template>
-    <script src="app.js"></script>
+    <script src="app.js?v=20260822-2"></script>
   </body>
 </html>

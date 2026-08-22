@@ -4,7 +4,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from agent.posting_extractor import PostingExtractionError
 from backend.main import create_app
+from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
 from backend.resume_store import ResumeCatalog, ResumeProfile, ResumeStatus, Skill
 from backend.scoring_engine import (
     ProviderAssessment,
@@ -22,6 +24,18 @@ class StubProvider:
         self.result = result
 
     async def score(self, posting, resume) -> ProviderAssessment:
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+class StubPostingExtractor:
+    def __init__(self, result: JobPostingFacts | Exception) -> None:
+        self.result = result
+        self.requested_url: str | None = None
+
+    async def fetch(self, result) -> JobPostingFacts:
+        self.requested_url = result.url
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -78,12 +92,14 @@ def make_client(
     *,
     provider_result: ProviderAssessment | Exception | None = None,
     profiles: tuple[ResumeProfile, ...] | None = None,
+    posting_extractor: StubPostingExtractor | None = None,
 ) -> TestClient:
     result = provider_result if provider_result is not None else assessment()
     app = create_app(
         database_path=tmp_path / "api.db",
         scoring_engine=ScoringEngine(StubProvider(result)),
         resume_catalog=ResumeCatalog(profiles or (ready_profile(),)),
+        posting_extractor=posting_extractor,
     )
     return TestClient(app)
 
@@ -149,6 +165,54 @@ def test_score_validates_request_before_calling_engine(tmp_path: Path) -> None:
     assert response.status_code == 422
 
 
+def test_score_url_extracts_scores_and_saves_public_posting(tmp_path: Path) -> None:
+    extractor = StubPostingExtractor(
+        JobPostingFacts(
+            title="Backend Engineer",
+            company="Acme",
+            description="Build Python APIs.",
+            sponsorship_status=SponsorshipStatus.YES,
+            company_size=500,
+            base_salary_max_usd=180000,
+        )
+    )
+    with make_client(tmp_path, posting_extractor=extractor) as client:
+        response = client.post(
+            "/api/score-url",
+            json={"url": "https://jobs.example.com/roles/42", "profile_id": "auto"},
+        )
+        jobs = client.get("/api/jobs").json()
+
+    assert response.status_code == 200
+    assert response.json()["overall_score"] == 80
+    assert response.json()["recommended_resume"] == "backend"
+    assert response.json()["job_id"] == jobs[0]["id"]
+    assert extractor.requested_url == "https://jobs.example.com/roles/42"
+
+
+def test_score_url_explains_extraction_failure(tmp_path: Path) -> None:
+    extractor = StubPostingExtractor(PostingExtractionError("access denied"))
+    with make_client(tmp_path, posting_extractor=extractor) as client:
+        response = client.post(
+            "/api/score-url",
+            json={"url": "https://jobs.example.com/roles/42"},
+        )
+
+    assert response.status_code == 422
+    assert "browser extension" in response.json()["detail"]
+
+
+def test_score_url_rejects_local_network_targets(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/score-url",
+            json={"url": "http://127.0.0.1/private-job"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Enter a public job-posting URL."
+
+
 def test_scored_job_is_listed_and_lifecycle_can_change(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         score_response = client.post(
@@ -190,5 +254,10 @@ def test_dashboard_assets_are_served(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert "APPLICATION COMMAND CENTER" in response.text
+    assert "Score a job from its link" in response.text
+    assert "USE RESUME" in response.text
     assert script.status_code == 200
     assert "loadJobs" in script.text
+    assert 'fetch("/api/score-url"' in script.text
+    assert "recommended_resume" in script.text
+    assert 'classList.toggle("current", isCurrentStatus)' in script.text

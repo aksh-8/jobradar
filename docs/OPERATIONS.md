@@ -28,11 +28,17 @@ The extension cannot run on browser-internal pages. A site without structured da
 
 Open `http://127.0.0.1:8000/dashboard/` while Uvicorn is running.
 
+- Paste a public job-posting URL into **Quick score** to extract, score, and save it.
+- Each job card shows **Use resume** with the selected resume variant.
 - **New**, **Viewed**, **Applied**, and **Skipped** filter lifecycle states.
 - Search matches title and company.
 - **Mark viewed** and **Applied** persist an event in SQLite.
 - **Skip** requires a reason.
 - Re-scoring the same canonical URL refreshes its score without resetting its lifecycle state.
+
+Some authenticated or bot-protected pages block backend extraction. Open those
+pages in Chrome or Edge and use the JobRadar extension, which extracts the
+rendered page before calling the same scoring API.
 
 Data is stored at `DATABASE_PATH` and is intentionally ignored by Git.
 

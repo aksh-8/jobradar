@@ -1,5 +1,6 @@
 """Tests for server-side job page normalization."""
 
+import httpx
 import pytest
 
 from agent.posting_extractor import PostingExtractionError, PostingExtractor, extract_posting
@@ -62,6 +63,23 @@ def test_falls_back_to_common_dom_fields() -> None:
     assert posting.sponsorship_status is SponsorshipStatus.NO
 
 
+def test_extracts_efinancialcareers_company_info() -> None:
+    posting = extract_posting(
+        """
+        <main>
+          <h1>Lead Software Engineer - Python/Automation</h1>
+          <span class="companyInfo"> JPMorgan Chase &amp; Co. </span>
+          <span class="loc"> Plano, United States </span>
+          <div class="job-description">Build secure Python services.</div>
+        </main>
+        """,
+        result(),
+    )
+
+    assert posting.company == "JPMorgan Chase & Co."
+    assert posting.location == "Plano, United States"
+
+
 def test_rejects_pages_without_required_fields() -> None:
     with pytest.raises(PostingExtractionError, match="company, description"):
         extract_posting("<h1>Backend Engineer</h1>", result())
@@ -84,3 +102,26 @@ async def test_authoritative_feed_content_does_not_refetch_page() -> None:
     assert posting.company == "Acme"
     assert posting.location == "Remote, United States"
     assert posting.sponsorship_status is SponsorshipStatus.YES
+
+
+@pytest.mark.asyncio
+async def test_public_page_fetch_uses_browser_compatible_headers() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["user-agent"].startswith("Mozilla/5.0")
+        assert "text/html" in request.headers["accept"]
+        return httpx.Response(
+            200,
+            text="""
+            <main>
+              <h1>Platform Engineer</h1>
+              <span class="companyInfo">Acme</span>
+              <div class="job-description">Build Python services.</div>
+            </main>
+            """,
+        )
+
+    posting = await PostingExtractor(
+        transport=httpx.MockTransport(handler)
+    ).fetch(result())
+
+    assert posting.company == "Acme"

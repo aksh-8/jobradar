@@ -11,7 +11,7 @@ Step 11 is in progress: the ignored private catalog contains four READY resume v
 | Component | Responsibility | Technology |
 | --- | --- | --- |
 | Browser extension | Extract job postings, request scores, and render actions | Chrome/Edge MV3, vanilla JavaScript |
-| Web dashboard | Review scored jobs and manage application lifecycle state | Responsive HTML, CSS, and vanilla JavaScript |
+| Web dashboard | Score public job links, review resume recommendations, and manage application lifecycle state | Responsive HTML, CSS, and vanilla JavaScript |
 | Backend API | Validate requests, scan hard filters, score roles, and persist events | Python 3.12, FastAPI, Uvicorn |
 | Scoring providers | Produce structured scoring with a local fallback | Gemini 3.6 Flash, Ollama Qwen 2.5 7B |
 | Persistence | Store discovered, viewed, skipped, and applied roles | SQLite, aiosqlite |
@@ -47,7 +47,7 @@ if (-not (Test-Path config\resume_profile.json)) {
 uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Open `http://127.0.0.1:8000/dashboard/`. The server terminal must remain running. Real scoring uses the READY private catalog and `RESUME_PROFILE_ID=auto` to select among General, Platform, AIAutomation, and FDE.
+Open `http://127.0.0.1:8000/dashboard/`. Paste a public job-posting URL into **Quick score**, or use the browser extension on the active page when a site blocks server-side extraction. Every saved role displays the recommended resume. The server terminal must remain running. Real scoring uses the READY private catalog and `RESUME_PROFILE_ID=auto` to select among General, Platform, AIAutomation, and FDE.
 
 ## Common commands
 

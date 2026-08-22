@@ -13,9 +13,12 @@ structured fit assessment, stores an auditable record in SQLite, and prepares a
 compiled digest. It does not submit applications or scrape authenticated user
 sessions.
 
-The browser extension and dashboard call the loopback FastAPI service. Scheduled
-discovery is a short-lived command and does not require FastAPI to remain
-running.
+The browser extension and dashboard call the loopback FastAPI service. The
+dashboard can submit a public posting URL for backend extraction, while the
+extension handles pages whose rendered browser content is not publicly
+fetchable. Both paths use the same resume selection and scoring engine.
+Scheduled discovery is a short-lived command and does not require FastAPI to
+remain running.
 
 ## End-to-end flow
 
