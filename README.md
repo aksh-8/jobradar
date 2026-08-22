@@ -4,7 +4,7 @@ JobRadar is a personal job-search intelligence system for Akash Biswal. It will 
 
 ## Current delivery status
 
-Step 4 of 11 is complete: the repository foundation, SQLite migrations, validated resume catalog, and deterministic hard-filter scanner are implemented. Application code is intentionally added only in the numbered build order below.
+Step 6 of 11 is complete: the repository foundation, SQLite migrations, validated resume catalog, deterministic hard-filter scanner, Gemini/Ollama scoring engine, and FastAPI backend are implemented. Application code is intentionally added only in the numbered build order below.
 
 ## Architecture
 
@@ -119,7 +119,7 @@ Expected output:
 JobRadar dependencies OK
 ```
 
-The backend server and `/health` endpoint are added in Step 6. That health check will confirm both server availability and whether `GEMINI_API_KEY` can authenticate; no real Gemini request is made by the test suite.
+The `/health` endpoint confirms server and database readiness and reports whether Gemini is configured without exposing or testing the secret. Provider authentication occurs on the first real scoring request; no real Gemini request is made by the test suite.
 
 ## Planned commands
 
