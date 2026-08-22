@@ -4,7 +4,7 @@ JobRadar is a personal job-search intelligence system for Akash Biswal. It will 
 
 ## Current delivery status
 
-Step 8 of 11 is complete: the repository foundation, scoring backend, browser extension, and responsive application dashboard are implemented. Application code is intentionally added only in the numbered build order below.
+Step 9 of 11 is complete: the repository foundation, scoring clients, application dashboard, and daily discovery/outreach/digest agent are implemented. Application code is intentionally added only in the numbered build order below.
 
 ## Architecture
 
@@ -133,10 +133,10 @@ pytest tests/ -v
 uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 
 # Run discovery without sending email
-python agent/discovery.py
+python -m agent.discovery
 
 # Run discovery and send the digest
-python agent/discovery.py --send-email
+python -m agent.discovery --send-email
 ```
 
 ## Security and production notes

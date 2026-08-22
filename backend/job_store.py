@@ -64,6 +64,19 @@ def deduplication_key(url: str) -> str:
     return hashlib.sha256(canonical_job_url(url).encode("utf-8")).hexdigest()
 
 
+async def job_exists(
+    url: str, *, database_path: str | Path | None = None
+) -> bool:
+    """Return whether a canonical URL has already been discovered."""
+
+    key = deduplication_key(url)
+    async with database_connection(database_path) as connection:
+        cursor = await connection.execute(
+            "SELECT 1 FROM jobs WHERE deduplication_key = ?", (key,)
+        )
+        return await cursor.fetchone() is not None
+
+
 async def save_scored_job(
     posting: JobPostingFacts,
     result: ScoringResult,
