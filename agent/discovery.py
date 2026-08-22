@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,13 +15,29 @@ from agent.digest import Digest, DigestOpportunity, build_digest
 from agent.email_delivery import EmailSender, create_email_sender
 from agent.outreach import build_outreach
 from agent.posting_extractor import PostingExtractionError, PostingExtractor
+from agent.search_plan import DiscoveryTrack, configured_discovery_tracks
 from agent.search_providers import SearchProvider, create_search_provider
-from backend.job_store import JobStatus, job_exists, save_scored_job, update_job_status
+from backend.job_store import (
+    JobStatus,
+    discovery_track_is_due,
+    find_existing_job,
+    list_due_follow_ups,
+    list_pending_digest_jobs,
+    mark_digest_jobs_sent,
+    mark_follow_ups_sent,
+    record_discovery_track_run,
+    save_scored_job,
+    touch_job_seen,
+    update_job_status,
+    weekly_missing_skills,
+)
 from backend.resume_store import (
-    DEFAULT_PROFILE_ID,
+    AUTO_PROFILE_ID,
+    ResumeCatalog,
     ResumeProfile,
     ResumeStatus,
-    get_resume_profile,
+    configured_resume_catalog,
+    select_resume_profile,
 )
 from backend.scoring_engine import (
     AllScoringProvidersFailedError,
@@ -30,10 +47,36 @@ from backend.scoring_engine import (
 )
 
 DEFAULT_SEARCH_QUERIES = (
-    '"backend engineer" "visa sponsorship"',
-    '"platform engineer" "visa sponsorship"',
-    '"software engineer" "visa sponsorship" "$140,000"',
+    '"senior software engineer" "visa sponsorship" USA',
+    '"platform engineer" "visa sponsorship" USA',
+    '"developer experience engineer" USA',
+    '"senior SDET" "visa sponsorship" USA',
+    '"senior automation engineer" "visa sponsorship" USA',
+    '"AI automation engineer" USA',
+    'site:jobs.apple.com "quality engineering" maps automation',
+    'site:jobs.ashbyhq.com/glean "forward deployed engineer"',
+    'site:jobs.lever.co/cohere "forward deployed engineer"',
+    'site:job-boards.greenhouse.io/scaleai "forward deployed engineer"',
 )
+DEFAULT_MAX_SCORING_JOBS_PER_RUN = 50
+
+
+@dataclass
+class ScoringBudget:
+    """Shared scheduled-run ceiling for postings that can invoke a model."""
+
+    limit: int
+    used: int = 0
+
+    def __post_init__(self) -> None:
+        if self.limit < 1:
+            raise ValueError("Scoring budget limit must be at least 1.")
+
+    def acquire(self) -> bool:
+        if self.used >= self.limit:
+            return False
+        self.used += 1
+        return True
 
 
 class DiscoveryReport(BaseModel):
@@ -46,6 +89,14 @@ class DiscoveryReport(BaseModel):
     below_threshold_results: int
     opportunities: tuple[DigestOpportunity, ...]
     errors: tuple[str, ...]
+    changed_results: int = 0
+    deferred_results: int = 0
+    tracks_run: tuple[str, ...] = ()
+    tracks_skipped: tuple[str, ...] = ()
+    failed_tracks: tuple[str, ...] = ()
+    compiled_opportunities: int = 0
+    follow_up_reminders: int = 0
+    email_sent: bool = False
 
 
 class DiscoveryAgent:
@@ -55,38 +106,54 @@ class DiscoveryAgent:
         search_provider: SearchProvider,
         extractor: PostingExtractor,
         scoring_engine: ScoringEngine,
-        resume: ResumeProfile,
+        resume: ResumeProfile | None = None,
+        resume_catalog: ResumeCatalog | None = None,
+        profile_id: str = AUTO_PROFILE_ID,
+        discovery_track: str | None = None,
+        scoring_budget: ScoringBudget | None = None,
         database_path: str | Path | None = None,
     ) -> None:
+        if (resume is None) == (resume_catalog is None):
+            raise ValueError("Provide exactly one resume or resume_catalog.")
         self.search_provider = search_provider
         self.extractor = extractor
         self.scoring_engine = scoring_engine
         self.resume = resume
+        self.resume_catalog = resume_catalog
+        self.profile_id = profile_id
+        self.discovery_track = discovery_track
+        self.scoring_budget = scoring_budget
         self.database_path = database_path
 
     async def run(
         self, queries: tuple[str, ...], *, limit: int = 20
     ) -> DiscoveryReport:
-        if self.resume.status is not ResumeStatus.READY:
+        if self.resume is not None and self.resume.status is not ResumeStatus.READY:
             raise ValueError(
                 f"Resume profile {self.resume.profile_id!r} must be READY before discovery."
             )
+        if self.resume_catalog is not None and not self.resume_catalog.list_profiles(
+            ready_only=True
+        ):
+            raise ValueError("At least one READY resume profile is required for discovery.")
         if not queries or any(not query.strip() for query in queries):
             raise ValueError("At least one non-blank search query is required.")
         if limit < 1:
             raise ValueError("limit must be at least 1.")
 
-        searched = duplicates = extraction_failures = rejected = below = 0
+        searched = duplicates = extraction_failures = rejected = below = changed = 0
+        deferred = 0
         opportunities: list[DigestOpportunity] = []
         errors: list[str] = []
         seen_urls: set[str] = set()
+        query_budgets = _query_result_budgets(len(queries), limit)
 
-        for query in queries:
-            if searched >= limit:
-                break
+        for query, query_limit in zip(queries, query_budgets, strict=True):
+            if query_limit == 0:
+                continue
             try:
                 results = await self.search_provider.search(
-                    query, limit=max(1, limit - searched)
+                    query, limit=query_limit
                 )
             except Exception as error:
                 errors.append(f"Search query {query!r} failed: {error}")
@@ -95,9 +162,7 @@ class DiscoveryAgent:
                 if searched >= limit:
                     break
                 searched += 1
-                if search_result.url in seen_urls or await job_exists(
-                    search_result.url, database_path=self.database_path
-                ):
+                if search_result.url in seen_urls:
                     duplicates += 1
                     continue
                 seen_urls.add(search_result.url)
@@ -109,8 +174,35 @@ class DiscoveryAgent:
                     errors.append(str(error))
                     continue
 
+                existing = await find_existing_job(
+                    posting,
+                    url=search_result.url,
+                    ats_name=search_result.ats_name,
+                    source_job_id=search_result.source_job_id,
+                    database_path=self.database_path,
+                )
+                if existing is not None and not existing.changed:
+                    duplicates += 1
+                    await touch_job_seen(existing.job_id, database_path=self.database_path)
+                    continue
+                if existing is not None:
+                    changed += 1
+
+                resume = self.resume or select_resume_profile(
+                    self.resume_catalog,
+                    posting.searchable_text,
+                    self.profile_id,
+                )
+                prescan = self.scoring_engine.scanner.scan(posting)
+                if (
+                    not prescan.rejected
+                    and self.scoring_budget is not None
+                    and not self.scoring_budget.acquire()
+                ):
+                    deferred += 1
+                    continue
                 try:
-                    score = await self.scoring_engine.score(posting, self.resume)
+                    score = await self.scoring_engine.score(posting, resume)
                 except AllScoringProvidersFailedError as error:
                     errors.append(f"Scoring {search_result.url} failed: {error}")
                     continue
@@ -120,6 +212,9 @@ class DiscoveryAgent:
                     score,
                     source=self.search_provider.name,
                     url=search_result.url,
+                    source_job_id=search_result.source_job_id,
+                    ats_name=search_result.ats_name,
+                    discovery_track=self.discovery_track,
                     database_path=self.database_path,
                 )
                 if score.verdict is ScoreVerdict.REJECTED:
@@ -160,6 +255,8 @@ class DiscoveryAgent:
             below_threshold_results=below,
             opportunities=tuple(opportunities),
             errors=tuple(errors),
+            changed_results=changed,
+            deferred_results=deferred,
         )
 
 
@@ -171,6 +268,15 @@ def configured_queries(overrides: tuple[str, ...] = ()) -> tuple[str, ...]:
     return queries or DEFAULT_SEARCH_QUERIES
 
 
+def _query_result_budgets(query_count: int, limit: int) -> tuple[int, ...]:
+    """Distribute the full result budget predictably across every query."""
+
+    if query_count < 1:
+        raise ValueError("query_count must be at least 1.")
+    base, remainder = divmod(limit, query_count)
+    return tuple(base + (1 if index < remainder else 0) for index in range(query_count))
+
+
 async def run_discovery(
     *,
     queries: tuple[str, ...],
@@ -178,22 +284,186 @@ async def run_discovery(
     send_email: bool,
     email_sender: EmailSender | None = None,
 ) -> tuple[DiscoveryReport, Digest]:
-    resume = get_resume_profile(os.getenv("RESUME_PROFILE_ID", DEFAULT_PROFILE_ID))
+    """Run one explicitly selected legacy provider/query set."""
+
+    catalog = configured_resume_catalog()
     agent = DiscoveryAgent(
         search_provider=create_search_provider(),
         extractor=PostingExtractor(),
         scoring_engine=create_default_scoring_engine(),
-        resume=resume,
+        resume_catalog=catalog,
+        profile_id=os.getenv("RESUME_PROFILE_ID", AUTO_PROFILE_ID),
     )
     report = await agent.run(queries, limit=limit)
-    digest = build_digest(report.opportunities)
+    return await _compile_and_optionally_deliver(
+        report, send_email=send_email, email_sender=email_sender
+    )
+
+
+async def run_scheduled_discovery(
+    *,
+    limit: int,
+    send_email: bool,
+    force_tracks: bool = False,
+    email_sender: EmailSender | None = None,
+    tracks: tuple[DiscoveryTrack, ...] | None = None,
+) -> tuple[DiscoveryReport, Digest]:
+    """Run each due Track A/B/C source and then compile one combined digest."""
+
+    catalog = configured_resume_catalog()
+    extractor = PostingExtractor()
+    scoring_engine = create_default_scoring_engine()
+    scoring_budget = ScoringBudget(
+        int(
+            os.getenv(
+                "MAX_SCORING_JOBS_PER_RUN",
+                str(DEFAULT_MAX_SCORING_JOBS_PER_RUN),
+            )
+        )
+    )
+    configured_tracks = tracks or configured_discovery_tracks(result_limit=limit)
+    reports: list[DiscoveryReport] = []
+    tracks_run: list[str] = []
+    tracks_skipped: list[str] = []
+    failed_tracks: list[str] = []
+    orchestration_errors: list[str] = []
+
+    if not configured_tracks:
+        orchestration_errors.append(
+            "No discovery tracks are configured. Add at least one ATS/career source "
+            "or a real SERPAPI_API_KEY/BRAVE_SEARCH_API_KEY."
+        )
+        failed_tracks.append("configuration")
+
+    for track in configured_tracks:
+        due = force_tracks or await discovery_track_is_due(
+            track.name, track.interval_hours
+        )
+        if not due:
+            tracks_skipped.append(track.name)
+            continue
+        tracks_run.append(track.name)
+        await record_discovery_track_run(track.name, "RUNNING")
+        try:
+            agent = DiscoveryAgent(
+                search_provider=track.provider,
+                extractor=extractor,
+                scoring_engine=scoring_engine,
+                resume_catalog=catalog,
+                profile_id=os.getenv("RESUME_PROFILE_ID", AUTO_PROFILE_ID),
+                discovery_track=track.name,
+                scoring_budget=scoring_budget,
+            )
+            report = await agent.run(track.queries, limit=track.result_limit)
+            reports.append(report)
+            all_searches_failed = (
+                report.searched_results == 0
+                and len(report.errors) >= len(track.queries)
+            )
+            if all_searches_failed:
+                message = (
+                    f"{len(report.errors)} search errors: "
+                    + "; ".join(report.errors)
+                )
+                await record_discovery_track_run(track.name, "FAILED", error=message)
+                failed_tracks.append(track.name)
+            else:
+                await record_discovery_track_run(track.name, "SUCCEEDED")
+        except Exception as error:
+            message = f"Discovery track {track.name!r} failed: {error}"
+            orchestration_errors.append(message)
+            failed_tracks.append(track.name)
+            await record_discovery_track_run(track.name, "FAILED", error=str(error))
+
+    report = _combine_reports(
+        reports,
+        extra_errors=tuple(orchestration_errors),
+        tracks_run=tuple(tracks_run),
+        tracks_skipped=tuple(tracks_skipped),
+        failed_tracks=tuple(failed_tracks),
+    )
+    return await _compile_and_optionally_deliver(
+        report, send_email=send_email, email_sender=email_sender
+    )
+
+
+async def _compile_and_optionally_deliver(
+    report: DiscoveryReport,
+    *,
+    send_email: bool,
+    email_sender: EmailSender | None,
+) -> tuple[DiscoveryReport, Digest]:
+    weekly_gaps = await weekly_missing_skills()
+    digest = build_digest(report.opportunities, weekly_gaps=weekly_gaps)
     if send_email:
         recipient = os.getenv("DIGEST_RECIPIENT_EMAIL", "").strip()
         if not recipient:
             raise ValueError("DIGEST_RECIPIENT_EMAIL is required with --send-email.")
-        sender = email_sender or create_email_sender()
-        await sender.send(digest, recipient)
+        pending = await list_pending_digest_jobs()
+        compiled = tuple(
+            DigestOpportunity(
+                job_id=job.id,
+                url=job.url,
+                posting=job.posting,
+                score=job.score,
+                outreach=build_outreach(job.posting, job.score),
+            )
+            for job in pending
+        )
+        follow_ups = await list_due_follow_ups()
+        digest = build_digest(
+            compiled,
+            follow_ups=follow_ups,
+            weekly_gaps=weekly_gaps,
+        )
+        send_empty = os.getenv("SEND_EMPTY_DIGEST", "false").casefold() in {
+            "1",
+            "true",
+            "yes",
+        }
+        email_sent = bool(compiled or follow_ups or send_empty)
+        if email_sent:
+            sender = email_sender or create_email_sender()
+            await sender.send(digest, recipient)
+            await mark_digest_jobs_sent(tuple(item.job_id for item in compiled))
+            await mark_follow_ups_sent(tuple(item.job_id for item in follow_ups))
+        report = report.model_copy(
+            update={
+                "compiled_opportunities": len(compiled),
+                "follow_up_reminders": len(follow_ups),
+                "email_sent": email_sent,
+            }
+        )
     return report, digest
+
+
+def _combine_reports(
+    reports: list[DiscoveryReport],
+    *,
+    extra_errors: tuple[str, ...] = (),
+    tracks_run: tuple[str, ...] = (),
+    tracks_skipped: tuple[str, ...] = (),
+    failed_tracks: tuple[str, ...] = (),
+) -> DiscoveryReport:
+    return DiscoveryReport(
+        searched_results=sum(report.searched_results for report in reports),
+        duplicate_results=sum(report.duplicate_results for report in reports),
+        extraction_failures=sum(report.extraction_failures for report in reports),
+        rejected_results=sum(report.rejected_results for report in reports),
+        below_threshold_results=sum(
+            report.below_threshold_results for report in reports
+        ),
+        changed_results=sum(report.changed_results for report in reports),
+        deferred_results=sum(report.deferred_results for report in reports),
+        opportunities=tuple(
+            opportunity for report in reports for opportunity in report.opportunities
+        ),
+        errors=tuple(error for report in reports for error in report.errors)
+        + extra_errors,
+        tracks_run=tracks_run,
+        tracks_skipped=tracks_skipped,
+        failed_tracks=failed_tracks,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -204,11 +474,16 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         help="Search query; repeat for multiple queries.",
     )
-    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--limit", type=int, default=60)
     parser.add_argument(
         "--send-email",
         action="store_true",
         help="Send the digest using EMAIL_PROVIDER; omitted means dry-run.",
+    )
+    parser.add_argument(
+        "--force-all-tracks",
+        action="store_true",
+        help="Run every configured track now, ignoring its durable interval state.",
     )
     return parser
 
@@ -216,28 +491,46 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     load_dotenv()
     args = _parser().parse_args()
-    report, digest = asyncio.run(
-        run_discovery(
+    if args.query:
+        operation = run_discovery(
             queries=configured_queries(tuple(args.query)),
             limit=args.limit,
             send_email=args.send_email,
         )
-    )
+    else:
+        operation = run_scheduled_discovery(
+            limit=args.limit,
+            send_email=args.send_email,
+            force_tracks=args.force_all_tracks,
+        )
+    report, digest = asyncio.run(operation)
     print(digest.text)
     print(
         "\nRun summary: "
         f"searched={report.searched_results}, "
         f"duplicates={report.duplicate_results}, "
+        f"changed={report.changed_results}, "
+        f"deferred={report.deferred_results}, "
         f"qualified={len(report.opportunities)}, "
         f"rejected={report.rejected_results}, "
         f"below_threshold={report.below_threshold_results}, "
         f"errors={len(report.errors)}"
     )
-    if args.send_email:
+    if report.tracks_run:
+        print("Tracks run: " + ", ".join(report.tracks_run))
+    if report.tracks_skipped:
+        print("Tracks not due: " + ", ".join(report.tracks_skipped))
+    if report.failed_tracks:
+        print("Failed tracks: " + ", ".join(report.failed_tracks))
+    for error in report.errors:
+        print(f"Warning: {error}")
+    if report.email_sent:
         print("Digest sent.")
+    elif args.send_email:
+        print("No pending roles or follow-ups; email skipped.")
     else:
         print("Dry run only; no email sent.")
-    return 0
+    return 2 if report.failed_tracks else 0
 
 
 if __name__ == "__main__":

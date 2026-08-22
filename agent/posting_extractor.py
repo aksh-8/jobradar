@@ -30,6 +30,25 @@ class PostingExtractor:
         )
 
     async def fetch(self, result: SearchResult) -> JobPostingFacts:
+        if result.canonical_content:
+            if not result.company or not result.description:
+                raise PostingExtractionError(
+                    f"Authoritative source {result.url} omitted company or description."
+                )
+            searchable = f"{result.title}\n{result.company}\n{result.description}"
+            return JobPostingFacts(
+                title=result.title,
+                company=result.company,
+                description=result.description,
+                location=result.location,
+                employment_type=result.employment_type,
+                workplace_type=result.workplace_type,
+                date_posted=result.date_posted,
+                valid_through=result.valid_through,
+                sponsorship_status=_sponsorship(searchable),
+                base_salary_min_usd=result.base_salary_min_usd,
+                base_salary_max_usd=result.base_salary_max_usd,
+            )
         try:
             async with httpx.AsyncClient(
                 transport=self.transport,
@@ -92,11 +111,17 @@ def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
         )
 
     salary = _salary(structured.get("baseSalary"))
+    location, workplace_type = _location(structured)
     searchable = f"{title}\n{company}\n{description}"
     return JobPostingFacts(
         title=title,
         company=company,
         description=description,
+        location=location or result.location,
+        employment_type=_employment_type(structured.get("employmentType")),
+        workplace_type=workplace_type,
+        date_posted=_text(structured.get("datePosted")) or None,
+        valid_through=_text(structured.get("validThrough")) or None,
         sponsorship_status=_sponsorship(searchable),
         **salary,
     )
@@ -160,6 +185,43 @@ def _salary(value: object) -> dict[str, int]:
     if isinstance(maximum, (int, float)) and maximum >= 0:
         output["base_salary_max_usd"] = round(maximum)
     return output
+
+
+def _location(structured: dict[str, object]) -> tuple[str | None, str | None]:
+    job_location_type = _text(structured.get("jobLocationType")).upper()
+    workplace_type = "Remote" if "TELECOMMUTE" in job_location_type else None
+    raw_locations = structured.get("jobLocation")
+    locations = raw_locations if isinstance(raw_locations, list) else [raw_locations]
+    rendered: list[str] = []
+    for location in locations:
+        if not isinstance(location, dict):
+            continue
+        address = location.get("address", location)
+        if isinstance(address, dict):
+            parts = (
+                _text(address.get("addressLocality")),
+                _text(address.get("addressRegion")),
+                _text(address.get("addressCountry")),
+            )
+            value = ", ".join(part for part in parts if part)
+            if value and value not in rendered:
+                rendered.append(value)
+    if workplace_type and not rendered:
+        requirements = structured.get("applicantLocationRequirements")
+        requirement_items = requirements if isinstance(requirements, list) else [requirements]
+        for requirement in requirement_items:
+            if isinstance(requirement, dict):
+                name = _text(requirement.get("name"))
+                if name and name not in rendered:
+                    rendered.append(name)
+    return ("; ".join(rendered) or workplace_type, workplace_type)
+
+
+def _employment_type(value: object) -> str | None:
+    if isinstance(value, list):
+        rendered = ", ".join(_text(item) for item in value if _text(item))
+        return rendered or None
+    return _text(value) or None
 
 
 def _sponsorship(text: str) -> SponsorshipStatus:

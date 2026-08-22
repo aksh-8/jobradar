@@ -25,10 +25,11 @@ def opportunity() -> DigestOpportunity:
         verdict=ScoreVerdict.MANUAL_REVIEW,
         provider="test",
         dimensions=ScoreDimensions(
-            role_alignment=90,
-            required_skills=90,
-            experience_fit=85,
-            career_fit=82,
+            skills_match=90,
+            experience_level=85,
+            domain_relevance=90,
+            role_type=82,
+            compensation_signal=75,
         ),
         matched_requirements=("Python",),
         missing_requirements=("Kubernetes",),
@@ -54,7 +55,9 @@ def test_outreach_uses_score_evidence_and_review_question() -> None:
 def test_digest_orders_and_html_escapes_content() -> None:
     digest = build_digest((opportunity(),), run_date=date(2026, 8, 21))
 
-    assert "88/100 - Backend <Engineer> at Acme & Co" in digest.text
+    assert "Acme & Co - Backend <Engineer>" in digest.text
+    assert "Score: 88/100" in digest.text
+    assert "LINKEDIN RECRUITER MESSAGE" in digest.text
     assert "Backend &lt;Engineer&gt;" in digest.html
     assert "Acme &amp; Co" in digest.html
     assert "a=1&amp;b=2" in digest.html

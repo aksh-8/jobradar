@@ -7,14 +7,19 @@ from pydantic import ValidationError
 
 from backend.resume_store import (
     AKASH_BISWAL_DRAFT,
+    AUTO_PROFILE_ID,
     RESUME_CATALOG,
     DuplicateResumeProfileError,
     ResumeCatalog,
     ResumeProfile,
     ResumeProfileNotFoundError,
     ResumeStatus,
+    Project,
     Skill,
     WorkExperience,
+    configured_resume_catalog,
+    load_resume_catalog,
+    select_resume_profile,
 )
 
 
@@ -144,3 +149,105 @@ def test_scoring_context_is_json_ready_and_omits_workflow_status() -> None:
         }
     ]
     assert "status" not in context
+
+
+def test_load_private_resume_catalog_from_json(tmp_path) -> None:
+    path = tmp_path / "resume.json"
+    path.write_text(
+        """
+        {
+          "profile_id": "backend",
+          "full_name": "Verified Candidate",
+          "status": "ready",
+          "summary": "Builds Python services.",
+          "target_roles": ["Backend Engineer"],
+          "skills": [{"name": "Python", "category": "Languages"}]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    profile = load_resume_catalog(path).get("backend")
+
+    assert profile.status is ResumeStatus.READY
+    assert profile.skills[0].name == "Python"
+
+
+def test_configured_catalog_uses_private_path(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "resume.json"
+    path.write_text(
+        '{"profile_id":"private","full_name":"Verified Candidate"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RESUME_PROFILE_PATH", str(path))
+
+    assert configured_resume_catalog().get("private").full_name == "Verified Candidate"
+
+
+def test_catalog_file_can_share_verified_facts_across_variants(tmp_path) -> None:
+    path = tmp_path / "resume.json"
+    path.write_text(
+        """
+        {
+          "shared": {
+            "full_name": "Verified Candidate",
+            "status": "ready",
+            "summary": "Builds Python services.",
+            "skills": [{"name": "Python", "category": "Languages"}]
+          },
+          "profiles": [
+            {
+              "profile_id": "general",
+              "resume_name": "General",
+              "target_roles": ["Software Engineer"]
+            },
+            {
+              "profile_id": "platform",
+              "resume_name": "Platform",
+              "target_roles": ["Platform Engineer"]
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    catalog = load_resume_catalog(path)
+
+    assert [profile.resume_name for profile in catalog.list_profiles()] == [
+        "General",
+        "Platform",
+    ]
+    assert catalog.get("platform").skills[0].name == "Python"
+
+
+def test_profile_rejects_unknown_project_skills() -> None:
+    with pytest.raises(ValidationError, match="Project references unknown skills"):
+        ResumeProfile(
+            profile_id="project",
+            full_name="Verified Candidate",
+            projects=(
+                Project(
+                    name="Project",
+                    summary="Built a service.",
+                    skill_names=("Unlisted",),
+                ),
+            ),
+        )
+
+
+def test_auto_selection_prefers_matching_resume_variant() -> None:
+    catalog = ResumeCatalog(
+        (
+            make_ready_profile("general", "Software Engineer", "Python"),
+            make_ready_profile("platform", "Platform Engineer", "Kubernetes"),
+        )
+    )
+
+    selected = select_resume_profile(
+        catalog,
+        "Platform Engineer building Kubernetes developer tooling",
+        AUTO_PROFILE_ID,
+    )
+
+    assert selected.profile_id == "platform"

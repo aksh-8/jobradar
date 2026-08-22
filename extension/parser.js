@@ -3,12 +3,18 @@
 
   const TITLE_SELECTORS = [
     "h1[data-test-id='job-title']",
+    "[data-automation-id='jobPostingHeader']",
+    ".posting-headline h2",
+    "#content h1",
     "h1.top-card-layout__title",
     "h1.jobsearch-JobInfoHeader-title",
     "h1",
   ];
   const COMPANY_SELECTORS = [
     "[data-company-name]",
+    "[data-automation-id='company']",
+    ".posting-headline [class*='company']",
+    "#content [class*='company']",
     ".topcard__org-name-link",
     ".jobsearch-InlineCompanyRating-companyHeader",
     "[class*='company-name']",
@@ -16,6 +22,9 @@
   ];
   const DESCRIPTION_SELECTORS = [
     "[data-test-id='job-description']",
+    "[data-automation-id='jobPostingDescription']",
+    "#content .job-post",
+    ".section-wrapper",
     "#job-details",
     "#jobDescriptionText",
     ".show-more-less-html__markup",

@@ -6,6 +6,8 @@
 *.key
 credentials.json
 secrets.json
+config/resume_profile.json
+logs/
 
 # Python virtual environments
 .venv/
@@ -72,3 +74,4 @@ temp/
 .DS_Store
 Thumbs.db
 Desktop.ini
+private/

@@ -2,7 +2,7 @@
 
 const DEFAULT_SETTINGS = Object.freeze({
   apiBaseUrl: "http://127.0.0.1:8000",
-  profileId: "akash-biswal",
+  profileId: "auto",
 });
 
 async function settings() {
@@ -44,7 +44,24 @@ async function requestScore(extracted) {
   if (!response.ok) {
     throw new Error(body.detail || `JobRadar API returned HTTP ${response.status}.`);
   }
-  return { ...body, page_url: extracted.page_url };
+  return { ...body, page_url: extracted.page_url, posting: extracted.posting };
+}
+
+async function updateStatus(jobId, status, skipReason = null) {
+  const configured = await settings();
+  const response = await fetch(
+    `${configured.apiBaseUrl.replace(/\/$/, "")}/api/jobs/${jobId}/status`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, skip_reason: skipReason }),
+    },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.detail || `JobRadar API returned HTTP ${response.status}.`);
+  }
+  return body;
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -62,6 +79,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     chrome.storage.local
       .set({ apiBaseUrl: message.apiBaseUrl, profileId: message.profileId })
       .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "JOBRADAR_UPDATE_STATUS") {
+    updateStatus(message.jobId, message.status, message.skipReason)
+      .then((job) => sendResponse({ ok: true, data: job }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }

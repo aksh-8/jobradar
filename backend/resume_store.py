@@ -7,11 +7,14 @@ made available to downstream scoring code.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
+from pathlib import Path
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -101,6 +104,15 @@ class Certification(ResumeModel):
         return self
 
 
+class Project(ResumeModel):
+    """One verified project and the skills demonstrated by it."""
+
+    name: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    highlights: tuple[str, ...] = ()
+    skill_names: tuple[str, ...] = ()
+
+
 class ResumeProfile(ResumeModel):
     """A role-targeted collection of verified resume facts."""
 
@@ -109,19 +121,28 @@ class ResumeProfile(ResumeModel):
         pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
     )
     full_name: str = Field(min_length=1)
+    resume_name: str | None = None
     status: ResumeStatus = ResumeStatus.DRAFT
     headline: str | None = None
     summary: str | None = None
     target_roles: tuple[str, ...] = ()
+    target_companies: tuple[str, ...] = ()
+    location_preferences: tuple[str, ...] = ()
+    work_authorization: str | None = None
+    minimum_base_salary_usd: int | None = Field(default=None, ge=0)
+    preferred_base_salary_usd: int | None = Field(default=None, ge=0)
     skills: tuple[Skill, ...] = ()
     experience: tuple[WorkExperience, ...] = ()
     education: tuple[Education, ...] = ()
     certifications: tuple[Certification, ...] = ()
+    projects: tuple[Project, ...] = ()
     keywords: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def content_is_consistent(self) -> Self:
         _require_unique("target roles", self.target_roles)
+        _require_unique("target companies", self.target_companies)
+        _require_unique("location preferences", self.location_preferences)
         _require_unique("keywords", self.keywords)
         _require_unique("skill names", tuple(skill.name for skill in self.skills))
 
@@ -139,6 +160,26 @@ class ResumeProfile(ResumeModel):
                 raise ValueError(
                     f"Work experience references unknown skills: {unknown_list}."
                 )
+        for project in self.projects:
+            unknown_skills = {
+                skill_name
+                for skill_name in project.skill_names
+                if _normalized_phrase(skill_name) not in known_skills
+            }
+            if unknown_skills:
+                unknown_list = ", ".join(sorted(unknown_skills))
+                raise ValueError(
+                    f"Project references unknown skills: {unknown_list}."
+                )
+
+        if (
+            self.minimum_base_salary_usd is not None
+            and self.preferred_base_salary_usd is not None
+            and self.preferred_base_salary_usd < self.minimum_base_salary_usd
+        ):
+            raise ValueError(
+                "preferred_base_salary_usd cannot be below minimum_base_salary_usd."
+            )
 
         if self.status is ResumeStatus.READY:
             missing = []
@@ -170,6 +211,10 @@ class DuplicateResumeProfileError(ValueError):
 
 class ResumeProfileNotFoundError(LookupError):
     """Raised when a requested resume profile is not in the catalog."""
+
+
+class ResumeConfigurationError(ValueError):
+    """Raised when a configured private resume catalog cannot be loaded."""
 
 
 @dataclass(frozen=True)
@@ -283,6 +328,11 @@ def _profile_match_terms(profile: ResumeProfile) -> dict[str, tuple[int, str]]:
     for role in profile.target_roles:
         normalized_role = _normalized_phrase(role)
         add(role, 5, f'role:{normalized_role}')
+    if profile.headline:
+        add(profile.headline, 5, "headline")
+    for company in profile.target_companies:
+        normalized_company = _normalized_phrase(company)
+        add(company, 4, f'company:{normalized_company}')
     for skill in profile.skills:
         normalized_skill = _normalized_phrase(skill.name)
         group = f'skill:{normalized_skill}'
@@ -295,6 +345,7 @@ def _profile_match_terms(profile: ResumeProfile) -> dict[str, tuple[int, str]]:
     return weighted_terms
 
 
+AUTO_PROFILE_ID = "auto"
 DEFAULT_PROFILE_ID = "akash-biswal"
 
 # The repository contains no verified career history yet.  Keeping this profile
@@ -312,3 +363,77 @@ def get_resume_profile(profile_id: str = DEFAULT_PROFILE_ID) -> ResumeProfile:
     """Retrieve a profile from JobRadar's application-wide catalog."""
 
     return RESUME_CATALOG.get(profile_id)
+
+
+def load_resume_catalog(profile_path: str | Path) -> ResumeCatalog:
+    """Load one profile or a profile list from a private JSON configuration."""
+
+    path = Path(profile_path).expanduser().resolve()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ResumeConfigurationError(
+            f"Configured resume profile file does not exist: {path}."
+        ) from error
+    except (OSError, json.JSONDecodeError) as error:
+        raise ResumeConfigurationError(
+            f"Could not read resume profile file {path}: {error}."
+        ) from error
+
+    shared: dict[str, object] = {}
+    if isinstance(raw, dict) and "profiles" in raw:
+        shared_value = raw.get("shared", {})
+        if not isinstance(shared_value, dict):
+            raise ResumeConfigurationError("Resume catalog 'shared' must be an object.")
+        shared = shared_value
+        raw_records = raw.get("profiles")
+        if not isinstance(raw_records, list):
+            raise ResumeConfigurationError("Resume catalog 'profiles' must be an array.")
+        records = []
+        for record in raw_records:
+            if not isinstance(record, dict):
+                raise ResumeConfigurationError(
+                    "Every resume profile entry must be an object."
+                )
+            records.append({**shared, **record})
+    else:
+        records = raw
+    if isinstance(records, dict):
+        records = [records]
+    if not isinstance(records, list) or not records:
+        raise ResumeConfigurationError(
+            "Resume profile JSON must contain one profile object or a non-empty "
+            "'profiles' array."
+        )
+    try:
+        profiles = tuple(ResumeProfile.model_validate(record) for record in records)
+        return ResumeCatalog(profiles)
+    except (TypeError, ValueError) as error:
+        raise ResumeConfigurationError(
+            f"Resume profile validation failed for {path}: {error}"
+        ) from error
+
+
+def configured_resume_catalog() -> ResumeCatalog:
+    """Load the private catalog when configured, otherwise retain the safe draft."""
+
+    configured_path = os.getenv("RESUME_PROFILE_PATH", "").strip()
+    return load_resume_catalog(configured_path) if configured_path else RESUME_CATALOG
+
+
+def select_resume_profile(
+    catalog: ResumeCatalog,
+    job_text: str,
+    profile_id: str = AUTO_PROFILE_ID,
+) -> ResumeProfile:
+    """Resolve an explicit profile or deterministically select the best variant."""
+
+    requested = profile_id.strip().casefold()
+    if requested and requested != AUTO_PROFILE_ID:
+        return catalog.get(requested)
+    matches = catalog.rank_for_job(job_text)
+    if not matches:
+        raise ResumeProfileNotFoundError(
+            "No READY resume profiles are available for automatic selection."
+        )
+    return matches[0].profile

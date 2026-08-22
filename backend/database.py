@@ -97,6 +97,55 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=2,
+        name="add_digest_and_follow_up_tracking",
+        statements=(
+            "ALTER TABLE jobs ADD COLUMN digest_sent_at TEXT",
+            "ALTER TABLE jobs ADD COLUMN applied_at TEXT",
+            (
+                "ALTER TABLE jobs ADD COLUMN response_received INTEGER NOT NULL "
+                "DEFAULT 0 CHECK (response_received IN (0, 1))"
+            ),
+            (
+                "ALTER TABLE jobs ADD COLUMN follow_up_sent INTEGER NOT NULL "
+                "DEFAULT 0 CHECK (follow_up_sent IN (0, 1))"
+            ),
+            "ALTER TABLE jobs ADD COLUMN follow_up_due_date TEXT",
+            "CREATE INDEX idx_jobs_digest_pending ON jobs(digest_sent_at, status)",
+            (
+                "CREATE INDEX idx_jobs_follow_up_due ON jobs("
+                "follow_up_sent, response_received, follow_up_due_date)"
+            ),
+        ),
+    ),
+    Migration(
+        version=3,
+        name="add_multisource_discovery_identity",
+        statements=(
+            "ALTER TABLE jobs ADD COLUMN ats_name TEXT",
+            "ALTER TABLE jobs ADD COLUMN canonical_url TEXT",
+            "ALTER TABLE jobs ADD COLUMN natural_key TEXT",
+            "ALTER TABLE jobs ADD COLUMN content_fingerprint TEXT",
+            "ALTER TABLE jobs ADD COLUMN content_hash TEXT",
+            "ALTER TABLE jobs ADD COLUMN date_posted TEXT",
+            "ALTER TABLE jobs ADD COLUMN valid_through TEXT",
+            "ALTER TABLE jobs ADD COLUMN discovery_track TEXT",
+            "CREATE INDEX idx_jobs_ats_identity ON jobs(ats_name, source_job_id)",
+            "CREATE INDEX idx_jobs_natural_identity ON jobs(natural_key)",
+            "CREATE INDEX idx_jobs_company_title ON jobs(company, title)",
+            "CREATE INDEX idx_jobs_discovery_track ON jobs(discovery_track, last_seen_at)",
+            """
+            CREATE TABLE discovery_track_runs (
+                track_name TEXT PRIMARY KEY CHECK (length(trim(track_name)) > 0),
+                last_started_at TEXT NOT NULL,
+                last_completed_at TEXT,
+                status TEXT NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED')),
+                error TEXT
+            )
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

@@ -198,3 +198,96 @@ def test_invalid_salary_range_is_rejected_at_input_boundary() -> None:
             base_salary_min_usd=180_000,
             base_salary_max_usd=140_000,
         )
+
+
+@pytest.mark.parametrize(
+    "description",
+    (
+        "Only USC/GC candidates are eligible.",
+        "This position requires a U.S. Person.",
+        "The work is subject to export-control requirements.",
+    ),
+)
+def test_work_authorization_and_export_control_language_rejects(
+    description: str,
+) -> None:
+    result = RedFlagScanner().scan(make_posting(description=description))
+
+    assert result.rejected
+
+
+def test_manual_execution_is_rejected_only_when_primary_signals_accumulate() -> None:
+    scanner = RedFlagScanner()
+
+    primary = scanner.scan(
+        make_posting(
+            description="Run manual test cases in TestRail and execute regression suites."
+        )
+    )
+    incidental = scanner.scan(
+        make_posting(description="Own an automation framework that integrates TestRail.")
+    )
+
+    assert RedFlagCode.MANUAL_TEST_EXECUTION in {
+        flag.code for flag in primary.hard_flags
+    }
+    assert RedFlagCode.MANUAL_TEST_EXECUTION not in {
+        flag.code for flag in incidental.hard_flags
+    }
+
+
+def test_unknown_salary_requires_review() -> None:
+    result = RedFlagScanner().scan(
+        make_posting(base_salary_min_usd=None, base_salary_max_usd=None)
+    )
+
+    assert RedFlagCode.SALARY_UNKNOWN in {flag.code for flag in result.review_flags}
+
+
+def test_known_sponsor_silence_does_not_create_sponsorship_review() -> None:
+    scanner = RedFlagScanner(known_sponsor_companies=("Apple",))
+    result = scanner.scan(
+        make_posting(
+            company="Apple Inc.",
+            sponsorship_status=SponsorshipStatus.UNKNOWN,
+        )
+    )
+
+    assert RedFlagCode.SPONSORSHIP_UNKNOWN not in {
+        flag.code for flag in result.review_flags
+    }
+
+
+def test_known_sponsor_never_overrides_explicit_role_restriction() -> None:
+    scanner = RedFlagScanner(known_sponsor_companies=("Apple",))
+    result = scanner.scan(
+        make_posting(
+            company="Apple",
+            description="Applicants must be authorized without future sponsorship.",
+            sponsorship_status=SponsorshipStatus.UNKNOWN,
+        )
+    )
+
+    assert RedFlagCode.NO_SPONSORSHIP in {flag.code for flag in result.hard_flags}
+
+
+def test_known_sponsor_matching_uses_exact_corporate_identity() -> None:
+    scanner = RedFlagScanner(known_sponsor_companies=("Apple",))
+    legal_name = scanner.scan(
+        make_posting(
+            company="Apple Inc.", sponsorship_status=SponsorshipStatus.UNKNOWN
+        )
+    )
+    unrelated_prefix = scanner.scan(
+        make_posting(
+            company="Apple Orchard Labs",
+            sponsorship_status=SponsorshipStatus.UNKNOWN,
+        )
+    )
+
+    assert RedFlagCode.SPONSORSHIP_UNKNOWN not in {
+        flag.code for flag in legal_name.review_flags
+    }
+    assert RedFlagCode.SPONSORSHIP_UNKNOWN in {
+        flag.code for flag in unrelated_prefix.review_flags
+    }

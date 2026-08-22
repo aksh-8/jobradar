@@ -1,0 +1,26 @@
+{
+  "shared": {
+    "full_name": "Your verified name",
+    "status": "draft",
+    "work_authorization": null,
+    "location_preferences": [],
+    "minimum_base_salary_usd": null,
+    "preferred_base_salary_usd": null,
+    "skills": [],
+    "experience": [],
+    "education": [],
+    "certifications": [],
+    "projects": []
+  },
+  "profiles": [
+    {
+      "profile_id": "candidate-general",
+      "resume_name": "General",
+      "headline": null,
+      "summary": null,
+      "target_roles": [],
+      "target_companies": [],
+      "keywords": []
+    }
+  ]
+}

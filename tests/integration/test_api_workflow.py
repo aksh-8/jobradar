@@ -20,10 +20,11 @@ class WorkflowProvider:
     async def score(self, posting, resume) -> ProviderAssessment:
         return ProviderAssessment(
             dimensions=ScoreDimensions(
-                role_alignment=92,
-                required_skills=88,
-                experience_fit=84,
-                career_fit=80,
+                skills_match=88,
+                experience_level=84,
+                domain_relevance=92,
+                role_type=80,
+                compensation_signal=90,
             ),
             matched_requirements=("Python", "FastAPI"),
             missing_requirements=("Kubernetes",),

@@ -16,14 +16,21 @@ from typing import Any, Protocol
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from backend.red_flag_scanner import JobPostingFacts, RedFlag, RedFlagScanner
+from backend.red_flag_scanner import (
+    JobPostingFacts,
+    RedFlag,
+    RedFlagCode,
+    RedFlagScanner,
+    SponsorshipStatus,
+)
 from backend.resume_store import ResumeProfile, ResumeStatus
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
 DEFAULT_MINIMUM_OVERALL_SCORE = 60
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
+NEUTRAL_COMPENSATION_SCORE = 50
 
 
 class ScoringModel(BaseModel):
@@ -39,20 +46,22 @@ class ScoringModel(BaseModel):
 class ScoreDimensions(ScoringModel):
     """Auditable fit scores returned by a scoring provider."""
 
-    role_alignment: int = Field(ge=0, le=100)
-    required_skills: int = Field(ge=0, le=100)
-    experience_fit: int = Field(ge=0, le=100)
-    career_fit: int = Field(ge=0, le=100)
+    skills_match: int = Field(ge=0, le=100)
+    experience_level: int = Field(ge=0, le=100)
+    domain_relevance: int = Field(ge=0, le=100)
+    role_type: int = Field(ge=0, le=100)
+    compensation_signal: int = Field(ge=0, le=100)
 
     @property
     def weighted_overall(self) -> int:
         """Compute the policy-owned score instead of trusting an AI total."""
 
         value = (
-            self.role_alignment * 0.30
-            + self.required_skills * 0.35
-            + self.experience_fit * 0.25
-            + self.career_fit * 0.10
+            self.skills_match * 0.35
+            + self.experience_level * 0.25
+            + self.domain_relevance * 0.20
+            + self.role_type * 0.10
+            + self.compensation_signal * 0.10
         )
         return round(value)
 
@@ -75,11 +84,25 @@ class ScoreVerdict(str, Enum):
     BELOW_THRESHOLD = "BELOW_THRESHOLD"
 
 
+class ApplicationVerdict(str, Enum):
+    """User-facing action that follows JobRadar's application strategy."""
+
+    APPLY_REFERRAL = "APPLY+REFERRAL"
+    BORDERLINE = "BORDERLINE"
+    SKIP = "SKIP"
+
+
 class ScoringResult(ScoringModel):
     """Complete scoring outcome, including deterministic policy signals."""
 
     overall_score: int = Field(ge=0, le=100)
     verdict: ScoreVerdict
+    action_verdict: ApplicationVerdict | None = None
+    resume_profile_id: str | None = None
+    recommended_resume: str | None = None
+    sponsorship_signal: SponsorshipStatus | None = None
+    base_salary_min_usd: int | None = Field(default=None, ge=0)
+    base_salary_max_usd: int | None = Field(default=None, ge=0)
     provider: str | None = None
     dimensions: ScoreDimensions | None = None
     matched_requirements: tuple[str, ...] = ()
@@ -146,14 +169,22 @@ class GeminiScoringProvider:
 
         # Imported lazily so deterministic tests and Ollama-only use do not
         # initialize the Gemini SDK or require credentials.
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
 
-        genai.configure(api_key=self.api_key)
-        client = genai.GenerativeModel(self.model)
-        response = await client.generate_content_async(
-            prompt,
-            generation_config={"response_mime_type": "application/json"},
-        )
+        async with genai.Client(api_key=self.api_key).aio as client:
+            response = await client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                        disable=True
+                    ),
+                    response_mime_type="application/json",
+                    response_json_schema=ProviderAssessment.model_json_schema(),
+                    temperature=0,
+                ),
+            )
         text = getattr(response, "text", None)
         if not text:
             raise ScoringProviderError("Gemini returned no text response.")
@@ -244,6 +275,12 @@ class ScoringEngine:
             return ScoringResult(
                 overall_score=0,
                 verdict=ScoreVerdict.REJECTED,
+                action_verdict=ApplicationVerdict.SKIP,
+                resume_profile_id=resume.profile_id,
+                recommended_resume=resume.resume_name or resume.profile_id,
+                sponsorship_signal=posting.sponsorship_status,
+                base_salary_min_usd=posting.base_salary_min_usd,
+                base_salary_max_usd=posting.base_salary_max_usd,
                 rationale=("Rejected by deterministic hard-filter policy.",),
                 hard_flags=scan.hard_flags,
                 review_flags=scan.review_flags,
@@ -252,17 +289,31 @@ class ScoringEngine:
         assessment, provider_name, fallback_used = await self._provider_score(
             posting, resume
         )
+        assessment = _apply_policy_owned_defaults(posting, assessment)
         overall = assessment.dimensions.weighted_overall
-        if scan.requires_manual_review:
+        blocking_review = any(
+            flag.code is RedFlagCode.SPONSORSHIP_UNKNOWN
+            for flag in scan.review_flags
+        )
+        if blocking_review:
             verdict = ScoreVerdict.MANUAL_REVIEW
+            action_verdict = ApplicationVerdict.BORDERLINE
         elif overall >= self.minimum_overall_score:
             verdict = ScoreVerdict.QUALIFIED
+            action_verdict = ApplicationVerdict.APPLY_REFERRAL
         else:
             verdict = ScoreVerdict.BELOW_THRESHOLD
+            action_verdict = ApplicationVerdict.SKIP
 
         return ScoringResult(
             overall_score=overall,
             verdict=verdict,
+            action_verdict=action_verdict,
+            resume_profile_id=resume.profile_id,
+            recommended_resume=resume.resume_name or resume.profile_id,
+            sponsorship_signal=posting.sponsorship_status,
+            base_salary_min_usd=posting.base_salary_min_usd,
+            base_salary_max_usd=posting.base_salary_max_usd,
             provider=provider_name,
             dimensions=assessment.dimensions,
             matched_requirements=assessment.matched_requirements,
@@ -303,7 +354,6 @@ def create_default_scoring_engine() -> ScoringEngine:
 
 
 def _build_prompt(posting: JobPostingFacts, resume: ResumeProfile) -> str:
-    schema = ProviderAssessment.model_json_schema()
     payload: dict[str, Any] = {
         "job": posting.model_dump(mode="json"),
         "resume": resume.scoring_context(),
@@ -311,8 +361,14 @@ def _build_prompt(posting: JobPostingFacts, resume: ResumeProfile) -> str:
     return (
         "Score this job against only the verified resume facts supplied. "
         "Do not infer missing experience or credentials. Score each dimension "
-        "from 0 to 100, keep rationale concise, and return JSON only.\n"
-        f"Required JSON schema:\n{json.dumps(schema, sort_keys=True)}\n"
+        "from 0 to 100 using these policy meanings: skills_match is hard-skill "
+        "fit, experience_level compares required experience with verified history, "
+        "domain_relevance measures platform/automation/AI context, role_type favors "
+        "builders and framework owners over manual executors, and "
+        "compensation_signal measures stated compensation against the configured "
+        "minimum and preference. When no salary range is supplied, return the "
+        f"neutral compensation score {NEUTRAL_COMPENSATION_SCORE}; application code "
+        "also enforces this default. Keep rationale concise and return JSON only.\n"
         f"Input:\n{json.dumps(payload, sort_keys=True)}"
     )
 
@@ -326,3 +382,20 @@ def _parse_assessment(raw: str) -> ProviderAssessment:
             if text.lstrip().startswith("json"):
                 text = text.lstrip()[4:].lstrip()
     return ProviderAssessment.model_validate_json(text)
+
+
+def _apply_policy_owned_defaults(
+    posting: JobPostingFacts,
+    assessment: ProviderAssessment,
+) -> ProviderAssessment:
+    """Remove model discretion where the input contains no compensation signal."""
+
+    if (
+        posting.base_salary_min_usd is not None
+        or posting.base_salary_max_usd is not None
+    ):
+        return assessment
+    dimensions = assessment.dimensions.model_copy(
+        update={"compensation_signal": NEUTRAL_COMPENSATION_SCORE}
+    )
+    return assessment.model_copy(update={"dimensions": dimensions})

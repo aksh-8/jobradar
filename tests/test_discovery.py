@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from agent.discovery import DiscoveryAgent, configured_queries
+from agent.discovery import (
+    DiscoveryAgent,
+    ScoringBudget,
+    _query_result_budgets,
+    configured_queries,
+)
 from agent.search_providers import SearchResult
 from backend.job_store import JobStatus, list_jobs
 from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
@@ -55,10 +60,11 @@ class StubAssessmentProvider:
         value = 90 if posting.title == "Strong" else 30
         return ProviderAssessment(
             dimensions=ScoreDimensions(
-                role_alignment=value,
-                required_skills=value,
-                experience_fit=value,
-                career_fit=value,
+                skills_match=value,
+                experience_level=value,
+                domain_relevance=value,
+                role_type=value,
+                compensation_signal=value,
             ),
             matched_requirements=("Python",) if value == 90 else (),
             rationale=("Evidence-based test result.",),
@@ -116,7 +122,37 @@ async def test_discovery_requires_ready_resume(tmp_path: Path) -> None:
         await agent.run(("jobs",))
 
 
+@pytest.mark.asyncio
+async def test_shared_scoring_budget_defers_only_model_scored_postings(
+    tmp_path: Path,
+) -> None:
+    provider = StubAssessmentProvider()
+    agent = DiscoveryAgent(
+        search_provider=StubSearch(),
+        extractor=StubExtractor(),
+        scoring_engine=ScoringEngine(provider),
+        resume=ready_resume(),
+        scoring_budget=ScoringBudget(1),
+        database_path=tmp_path / "budget.db",
+    )
+
+    report = await agent.run(("jobs",), limit=10)
+
+    assert provider.calls == 1
+    assert report.deferred_results == 1
+    assert report.rejected_results == 1
+
+
 def test_configured_queries_accepts_pipe_separated_environment(monkeypatch) -> None:
     monkeypatch.setenv("JOB_SEARCH_QUERIES", "backend jobs | platform jobs")
 
     assert configured_queries() == ("backend jobs", "platform jobs")
+
+
+def test_query_budget_distributes_remainder_without_starving_google_matrix() -> None:
+    budgets = _query_result_budgets(25, 60)
+
+    assert len(budgets) == 25
+    assert sum(budgets) == 60
+    assert budgets[:10] == (3,) * 10
+    assert budgets[10:] == (2,) * 15

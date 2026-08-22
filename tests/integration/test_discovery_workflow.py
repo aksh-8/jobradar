@@ -82,10 +82,11 @@ async def test_search_extract_score_digest_deliver_and_list(tmp_path: Path) -> N
         assert "Canopy Systems" in prompt
         return ProviderAssessment(
             dimensions=ScoreDimensions(
-                role_alignment=90,
-                required_skills=86,
-                experience_fit=82,
-                career_fit=88,
+                skills_match=86,
+                experience_level=82,
+                domain_relevance=90,
+                role_type=88,
+                compensation_signal=85,
             ),
             matched_requirements=("Python", "cloud services"),
             rationale=("Verified Python experience aligns with the platform role.",),
@@ -129,7 +130,9 @@ async def test_search_extract_score_digest_deliver_and_list(tmp_path: Path) -> N
     assert report.searched_results == 1
     assert len(report.opportunities) == 1
     assert report.opportunities[0].score.overall_score == 86
-    assert "Platform Engineer at Canopy Systems" in digest.text
+    assert "Canopy Systems - Platform Engineer" in digest.text
+    assert "Resume to use:" in digest.text
+    assert "APPLY+REFERRAL" in digest.text
     assert delivered["subject"] == digest.subject
 
     app = create_app(
@@ -154,10 +157,11 @@ async def test_invalid_primary_output_falls_back_to_ollama_through_api(
 
     assessment = ProviderAssessment(
         dimensions=ScoreDimensions(
-            role_alignment=75,
-            required_skills=75,
-            experience_fit=75,
-            career_fit=75,
+            skills_match=75,
+            experience_level=75,
+            domain_relevance=75,
+            role_type=75,
+            compensation_signal=75,
         ),
         rationale=("Local fallback produced a valid assessment.",),
     )

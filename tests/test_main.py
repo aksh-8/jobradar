@@ -41,10 +41,11 @@ def ready_profile() -> ResumeProfile:
 def assessment(score: int = 80) -> ProviderAssessment:
     return ProviderAssessment(
         dimensions=ScoreDimensions(
-            role_alignment=score,
-            required_skills=score,
-            experience_fit=score,
-            career_fit=score,
+            skills_match=score,
+            experience_level=score,
+            domain_relevance=score,
+            role_type=score,
+            compensation_signal=score,
         ),
         rationale=("The verified profile matches the posting.",),
     )
@@ -95,7 +96,7 @@ def test_health_initializes_and_checks_database(tmp_path: Path) -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["database"] == "ready"
-    assert body["schema_version"] == 1
+    assert body["schema_version"] == 3
     assert isinstance(body["gemini"]["configured"], bool)
     assert (tmp_path / "api.db").is_file()
 

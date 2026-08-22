@@ -15,11 +15,24 @@ h1 { font-size: 24px; line-height: 1.15; margin: 0; }
 button { background: #19734b; border: 0; border-radius: 9px; color: #fff; cursor: pointer; font: inherit; font-weight: 700; padding: 10px 14px; width: 100%; }
 button:hover { background: #125d3b; }
 button.secondary { background: #e6efe9; color: #174d35; }
+button.danger { background: #f7dfdf; color: #8b2929; }
 .score-row { align-items: center; display: flex; justify-content: space-between; }
 #score-value { font-size: 46px; line-height: 1; }
+#score-value.good { color: #19734b; }
+#score-value.warn { color: #a56a00; }
+#score-value.bad { color: #a63832; }
 .badge { background: #e6efe9; border-radius: 999px; color: #174d35; font-size: 11px; font-weight: 800; padding: 6px 9px; }
 .muted { color: #65736b; font-size: 12px; }
 #flags p { background: #fff3d6; border-radius: 8px; color: #6f4c00; font-size: 12px; padding: 8px; }
+h2 { font-size: 12px; margin: 14px 0 6px; text-transform: uppercase; }
+.facts { display: grid; gap: 6px; margin: 12px 0; }
+.facts div { display: flex; font-size: 12px; justify-content: space-between; }
+.facts dt { color: #65736b; }
+.facts dd { font-weight: 700; margin: 0; text-align: right; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { background: #e6efe9; border-radius: 999px; color: #174d35; font-size: 11px; padding: 4px 7px; }
+.chip.missing { background: #f7dfdf; color: #8b2929; }
+.actions { display: grid; gap: 7px; margin: 14px 0; }
 ul { padding-left: 20px; }
 li { font-size: 13px; margin: 6px 0; }
 .error { border-color: #efc8c8; }

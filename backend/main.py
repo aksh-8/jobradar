@@ -22,14 +22,17 @@ from backend.job_store import (
 )
 from backend.red_flag_scanner import JobPostingFacts
 from backend.resume_store import (
-    RESUME_CATALOG,
+    AUTO_PROFILE_ID,
     ResumeCatalog,
     ResumeProfile,
     ResumeProfileNotFoundError,
     ResumeStatus,
+    configured_resume_catalog,
+    select_resume_profile,
 )
 from backend.scoring_engine import (
     AllScoringProvidersFailedError,
+    DEFAULT_GEMINI_MODEL,
     ScoringEngine,
     ScoringResult,
     create_default_scoring_engine,
@@ -48,7 +51,7 @@ class ScoreRequest(ApiModel):
     """A posting and the verified resume profile used to score it."""
 
     posting: JobPostingFacts
-    profile_id: str
+    profile_id: str = AUTO_PROFILE_ID
     source: str = "api"
     source_job_id: str | None = None
     url: str | None = None
@@ -113,7 +116,7 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.scoring_engine = scoring_engine or create_default_scoring_engine()
-    application.state.resume_catalog = resume_catalog or RESUME_CATALOG
+    application.state.resume_catalog = resume_catalog or configured_resume_catalog()
     application.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -157,7 +160,7 @@ def _build_routes():
             schema_version=LATEST_SCHEMA_VERSION,
             gemini=ProviderHealth(
                 configured=_configured_secret("GEMINI_API_KEY"),
-                model=os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
+                model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
             ),
             ollama=ProviderHealth(
                 configured=bool(os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")),
@@ -199,7 +202,11 @@ def _build_routes():
         engine: ScoringEngine = request.app.state.scoring_engine
         catalog: ResumeCatalog = request.app.state.resume_catalog
         try:
-            profile: ResumeProfile = catalog.get(payload.profile_id)
+            profile: ResumeProfile = select_resume_profile(
+                catalog,
+                payload.posting.searchable_text,
+                payload.profile_id,
+            )
         except ResumeProfileNotFoundError as error:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

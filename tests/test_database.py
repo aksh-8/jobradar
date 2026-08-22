@@ -30,14 +30,18 @@ async def test_initialize_database_creates_schema_and_is_idempotent(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
         tables = {row["name"] for row in await cursor.fetchall()}
-        assert {"schema_migrations", "jobs", "job_events"} <= tables
+        assert {
+            "schema_migrations", "jobs", "job_events", "discovery_track_runs"
+        } <= tables
 
         cursor = await connection.execute(
             "SELECT version, name FROM schema_migrations"
         )
         migrations = await cursor.fetchall()
-        assert [(row["version"], row["name"]) for row in migrations] == [
-            (1, "create_job_tracking_schema")
+        assert sorted((row["version"], row["name"]) for row in migrations) == [
+            (1, "create_job_tracking_schema"),
+            (2, "add_digest_and_follow_up_tracking"),
+            (3, "add_multisource_discovery_identity"),
         ]
 
 
