@@ -4,7 +4,7 @@ JobRadar is a personal job-search intelligence system for Akash Biswal. It will 
 
 ## Current delivery status
 
-Step 9 of 11 is complete: the repository foundation, scoring clients, application dashboard, and daily discovery/outreach/digest agent are implemented. Application code is intentionally added only in the numbered build order below.
+Step 10 of 11 is complete: all application components are implemented and covered by unit and cross-component integration tests. Final profile configuration and operating documentation remain for Step 11.
 
 ## Architecture
 
