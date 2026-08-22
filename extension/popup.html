@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>JobRadar</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">JOBRADAR</p>
+        <h1>Should you apply?</h1>
+      </header>
+
+      <section id="idle" class="panel">
+        <p>Open a job posting and score it against your verified profile.</p>
+        <button id="score" type="button">Score this job</button>
+      </section>
+
+      <section id="loading" class="panel hidden" aria-live="polite">
+        <div class="spinner" aria-hidden="true"></div>
+        <p>Reading and scoring this role…</p>
+      </section>
+
+      <section id="result" class="panel hidden" aria-live="polite">
+        <div class="score-row">
+          <strong id="score-value">—</strong>
+          <span id="verdict" class="badge"></span>
+        </div>
+        <p id="provider" class="muted"></p>
+        <div id="flags"></div>
+        <ul id="rationale"></ul>
+        <button id="rescore" class="secondary" type="button">Score again</button>
+      </section>
+
+      <section id="error" class="panel error hidden" aria-live="assertive">
+        <strong>Couldn’t score this page</strong>
+        <p id="error-message"></p>
+        <button id="retry" class="secondary" type="button">Try again</button>
+      </section>
+
+      <details>
+        <summary>Settings</summary>
+        <label for="api-url">API URL</label>
+        <input id="api-url" type="url" value="http://127.0.0.1:8000">
+        <label for="profile-id">Resume profile ID</label>
+        <input id="profile-id" value="akash-biswal">
+        <button id="save" class="secondary" type="button">Save settings</button>
+        <p id="save-status" class="muted" aria-live="polite"></p>
+      </details>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

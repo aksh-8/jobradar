@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "JobRadar",
+  "version": "0.1.0",
+  "description": "Score the active job posting with the local JobRadar service.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Score this job",
+    "default_popup": "popup.html"
+  }
+}
