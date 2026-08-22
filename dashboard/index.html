@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Review JobRadar scores and manage applications.">
+    <title>JobRadar Dashboard</title>
+    <link rel="stylesheet" href="app.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/dashboard/" aria-label="JobRadar dashboard">
+        <span class="brand-mark">JR</span>
+        <span>JobRadar</span>
+      </a>
+      <div class="health"><span id="health-dot"></span><span id="health-text">Checking API</span></div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">APPLICATION COMMAND CENTER</p>
+          <h1>Your best opportunities,<br>without the noise.</h1>
+          <p class="intro">Review qualified roles and keep every application moving.</p>
+        </div>
+        <button id="refresh" class="refresh" type="button">Refresh jobs</button>
+      </section>
+
+      <section class="metrics" aria-label="Job summary">
+        <article><span>Opportunities</span><strong id="metric-total">0</strong></article>
+        <article><span>Qualified</span><strong id="metric-qualified">0</strong></article>
+        <article><span>Applied</span><strong id="metric-applied">0</strong></article>
+        <article><span>Average score</span><strong id="metric-average">—</strong></article>
+      </section>
+
+      <section class="workspace">
+        <div class="toolbar">
+          <div class="filters" role="group" aria-label="Filter by status">
+            <button class="filter active" data-status="ALL" type="button">All</button>
+            <button class="filter" data-status="DISCOVERED" type="button">New</button>
+            <button class="filter" data-status="VIEWED" type="button">Viewed</button>
+            <button class="filter" data-status="APPLIED" type="button">Applied</button>
+            <button class="filter" data-status="SKIPPED" type="button">Skipped</button>
+          </div>
+          <label class="search">
+            <span class="sr-only">Search jobs</span>
+            <input id="search" type="search" placeholder="Search role or company">
+          </label>
+        </div>
+
+        <div id="notice" class="notice hidden" role="status"></div>
+        <div id="jobs" class="jobs" aria-live="polite"></div>
+        <div id="empty" class="empty hidden">
+          <strong>No matching jobs</strong>
+          <p>Score a posting with the browser extension, then refresh this page.</p>
+        </div>
+      </section>
+    </main>
+
+    <template id="job-template">
+      <article class="job-card">
+        <div class="score"><strong></strong><span>FIT</span></div>
+        <div class="job-main">
+          <div class="job-heading">
+            <div><p class="company"></p><h2></h2></div>
+            <span class="status"></span>
+          </div>
+          <div class="signals"></div>
+          <p class="rationale"></p>
+          <div class="actions">
+            <a class="open-job" target="_blank" rel="noopener noreferrer">Open job</a>
+            <button data-action="VIEWED" type="button">Mark viewed</button>
+            <button data-action="APPLIED" class="primary" type="button">Applied</button>
+            <button data-action="SKIPPED" type="button">Skip</button>
+          </div>
+        </div>
+      </article>
+    </template>
+    <script src="app.js"></script>
+  </body>
+</html>

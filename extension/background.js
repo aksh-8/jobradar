@@ -35,6 +35,8 @@ async function requestScore(extracted) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       profile_id: configured.profileId,
+      source: "browser-extension",
+      url: extracted.page_url,
       posting: extracted.posting,
     }),
   });

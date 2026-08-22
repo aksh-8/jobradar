@@ -9,9 +9,17 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from backend.database import LATEST_SCHEMA_VERSION, database_connection, initialize_database
+from backend.job_store import (
+    JobStatus,
+    StoredJob,
+    list_jobs,
+    save_scored_job,
+    update_job_status,
+)
 from backend.red_flag_scanner import JobPostingFacts
 from backend.resume_store import (
     RESUME_CATALOG,
@@ -41,6 +49,20 @@ class ScoreRequest(ApiModel):
 
     posting: JobPostingFacts
     profile_id: str
+    source: str = "api"
+    source_job_id: str | None = None
+    url: str | None = None
+
+
+class ScoreResponse(ScoringResult):
+    """Scoring outcome with an ID when the caller supplied a job URL."""
+
+    job_id: int | None = None
+
+
+class StatusUpdate(ApiModel):
+    status: JobStatus
+    skip_reason: str | None = None
 
 
 class ProviderHealth(ApiModel):
@@ -101,6 +123,13 @@ def create_app(
     )
 
     application.include_router(_build_routes())
+    dashboard_path = Path(__file__).resolve().parent.parent / "dashboard"
+    if dashboard_path.is_dir():
+        application.mount(
+            "/dashboard",
+            StaticFiles(directory=dashboard_path, html=True),
+            name="dashboard",
+        )
     return application
 
 
@@ -136,11 +165,37 @@ def _build_routes():
             ),
         )
 
-    @router.post("/api/score", response_model=ScoringResult)
+    @router.get("/api/jobs", response_model=list[StoredJob])
+    async def jobs(request: Request, status_filter: JobStatus | None = None):
+        return await list_jobs(
+            status=status_filter,
+            database_path=request.app.state.database_path,
+        )
+
+    @router.patch("/api/jobs/{job_id}/status", response_model=StoredJob)
+    async def change_job_status(
+        job_id: int,
+        payload: StatusUpdate,
+        request: Request,
+    ) -> StoredJob:
+        try:
+            job = await update_job_status(
+                job_id,
+                payload.status,
+                skip_reason=payload.skip_reason,
+                database_path=request.app.state.database_path,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        return job
+
+    @router.post("/api/score", response_model=ScoreResponse)
     async def score_job(
         payload: ScoreRequest,
         request: Request,
-    ) -> ScoringResult:
+    ) -> ScoreResponse:
         engine: ScoringEngine = request.app.state.scoring_engine
         catalog: ResumeCatalog = request.app.state.resume_catalog
         try:
@@ -161,12 +216,24 @@ def _build_routes():
             )
 
         try:
-            return await engine.score(payload.posting, profile)
+            result = await engine.score(payload.posting, profile)
         except AllScoringProvidersFailedError as error:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(error),
             ) from error
+
+        job_id = None
+        if payload.url:
+            job_id = await save_scored_job(
+                payload.posting,
+                result,
+                source=payload.source,
+                source_job_id=payload.source_job_id,
+                url=payload.url,
+                database_path=request.app.state.database_path,
+            )
+        return ScoreResponse(**result.model_dump(), job_id=job_id)
 
     return router
 

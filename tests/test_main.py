@@ -50,8 +50,10 @@ def assessment(score: int = 80) -> ProviderAssessment:
     )
 
 
-def score_payload(profile_id: str = "backend") -> dict[str, object]:
-    return {
+def score_payload(
+    profile_id: str = "backend", *, with_url: bool = False
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "profile_id": profile_id,
         "posting": {
             "title": "Backend Engineer",
@@ -62,6 +64,12 @@ def score_payload(profile_id: str = "backend") -> dict[str, object]:
             "base_salary_max_usd": 180000,
         },
     }
+    if with_url:
+        payload.update(
+            source="test-extension",
+            url="https://example.com/jobs/42?utm_source=test",
+        )
+    return payload
 
 
 def make_client(
@@ -138,3 +146,48 @@ def test_score_validates_request_before_calling_engine(tmp_path: Path) -> None:
         response = client.post("/api/score", json=payload)
 
     assert response.status_code == 422
+
+
+def test_scored_job_is_listed_and_lifecycle_can_change(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        score_response = client.post(
+            "/api/score", json=score_payload(with_url=True)
+        )
+        assert score_response.status_code == 200
+        job_id = score_response.json()["job_id"]
+
+        jobs_response = client.get("/api/jobs")
+        assert jobs_response.status_code == 200
+        assert jobs_response.json()[0]["id"] == job_id
+
+        update_response = client.patch(
+            f"/api/jobs/{job_id}/status",
+            json={"status": "APPLIED"},
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["status"] == "APPLIED"
+
+
+def test_skipping_job_requires_reason(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        job_id = client.post(
+            "/api/score", json=score_payload(with_url=True)
+        ).json()["job_id"]
+        response = client.patch(
+            f"/api/jobs/{job_id}/status",
+            json={"status": "SKIPPED"},
+        )
+
+    assert response.status_code == 422
+    assert "skip_reason" in response.json()["detail"]
+
+
+def test_dashboard_assets_are_served(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.get("/dashboard/")
+        script = client.get("/dashboard/app.js")
+
+    assert response.status_code == 200
+    assert "APPLICATION COMMAND CENTER" in response.text
+    assert script.status_code == 200
+    assert "loadJobs" in script.text
