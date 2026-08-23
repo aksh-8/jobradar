@@ -12,6 +12,8 @@ import httpx
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.location_policy import is_us_based
+
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 30.0
 AGGREGATOR_HOSTS = ("linkedin.com", "indeed.com", "ziprecruiter.com", "google.com")
 CANONICAL_JOB_HOST_MARKERS = (
@@ -566,30 +568,7 @@ def _target_role_title(title: str) -> bool:
 def _us_location_relevant(value: object) -> bool:
     """Exclude explicit international-only board rows; retain unknown locations."""
 
-    location = " ".join(str(value or "").casefold().split())
-    if not location:
+    location = " ".join(str(value or "").split())
+    if not location or location.casefold() == "remote":
         return True
-    us_markers = (
-        "united states", "remote - us", "remote, us", "north america",
-        "california", "new york", "washington", "texas", "massachusetts",
-        "virginia", "colorado", "illinois", "oregon",
-    )
-    if any(marker in location for marker in us_markers) or re.search(
-        r"(?:,\s*|\()(?:al|ak|az|ar|ca|co|ct|de|fl|ga|hi|id|il|in|ia|ks|ky|la|me|"
-        r"md|ma|mi|mn|ms|mo|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|"
-        r"sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy|dc)\b",
-        location,
-    ):
-        return True
-    non_us_markers = (
-        "africa", "asia", "europe", "emea", "apac", "latam",
-        "latin america", "middle east", "united kingdom", " uk", "canada",
-        "mexico", "brazil", "argentina", "uruguay", "colombia", "chile",
-        "peru", "hungary", "germany", "france", "netherlands", "ireland",
-        "spain", "portugal", "poland", "romania", "ukraine", "israel",
-        "united arab emirates", " uae", "qatar", "saudi arabia", "india",
-        "singapore", "japan", "south korea", "australia", "new zealand",
-        "toronto", "montreal", "london", "paris", "berlin", "budapest",
-        "seoul", "bangalore", "tokyo", "doha",
-    )
-    return not any(marker in location for marker in non_us_markers)
+    return is_us_based(location)

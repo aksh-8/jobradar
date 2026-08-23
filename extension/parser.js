@@ -32,6 +32,14 @@
     "[class*='jobDescription']",
     "main",
   ];
+  const LOCATION_SELECTORS = [
+    "[data-automation-id='locations']",
+    "[data-test-id='job-location']",
+    ".topcard__flavor--bullet",
+    "[class*='job-location']",
+    "[class*='jobLocation']",
+    ".loc",
+  ];
 
   function cleanText(value) {
     return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -100,6 +108,37 @@
     return result;
   }
 
+  function locationFacts(structured) {
+    const remote = cleanText(structured?.jobLocationType).toUpperCase().includes("TELECOMMUTE");
+    const rawLocations = Array.isArray(structured?.jobLocation)
+      ? structured.jobLocation
+      : [structured?.jobLocation];
+    const locations = [];
+    for (const item of rawLocations) {
+      const address = item?.address || item;
+      if (!address || typeof address !== "object") continue;
+      const rendered = [
+        address.addressLocality,
+        address.addressRegion,
+        address.addressCountry,
+      ].map(cleanText).filter(Boolean).join(", ");
+      if (rendered && !locations.includes(rendered)) locations.push(rendered);
+    }
+    if (remote && !locations.length) {
+      const requirements = Array.isArray(structured?.applicantLocationRequirements)
+        ? structured.applicantLocationRequirements
+        : [structured?.applicantLocationRequirements];
+      for (const requirement of requirements) {
+        const name = cleanText(requirement?.name || requirement);
+        if (name && !locations.includes(name)) locations.push(name);
+      }
+    }
+    const output = {};
+    if (locations.length || remote) output.location = locations.join("; ") || "Remote";
+    if (remote) output.workplace_type = "Remote";
+    return output;
+  }
+
   function sponsorshipStatus(text) {
     const normalized = cleanText(text).toLowerCase();
     const noPatterns = [
@@ -123,6 +162,8 @@
       || firstText(document, COMPANY_SELECTORS);
     const description = plainDescription(structured.description, document)
       || firstText(document, DESCRIPTION_SELECTORS);
+    const structuredLocation = locationFacts(structured);
+    const domLocation = firstText(document, LOCATION_SELECTORS);
 
     if (!title || !company || !description) {
       const missing = [
@@ -139,13 +180,16 @@
         title,
         company,
         description,
+        ...(structuredLocation.location
+          ? structuredLocation
+          : (domLocation ? { location: domLocation } : {})),
         sponsorship_status: sponsorshipStatus(`${title}\n${company}\n${description}`),
         ...salaryFacts(structured.baseSalary),
       },
     };
   }
 
-  const api = { cleanText, extract, salaryFacts, sponsorshipStatus };
+  const api = { cleanText, extract, locationFacts, salaryFacts, sponsorshipStatus };
   root.JobRadarParser = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

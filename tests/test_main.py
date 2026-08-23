@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from agent.posting_extractor import PostingExtractionError
+from agent.posting_extractor import ClosedJobPostingError, PostingExtractionError
 from backend.main import create_app
 from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
 from backend.resume_store import ResumeCatalog, ResumeProfile, ResumeStatus, Skill
@@ -74,6 +74,7 @@ def score_payload(
             "title": "Backend Engineer",
             "company": "Acme",
             "description": "Build Python APIs.",
+            "location": "Los Angeles, CA",
             "sponsorship_status": "YES",
             "company_size": 500,
             "base_salary_max_usd": 180000,
@@ -112,7 +113,7 @@ def test_health_initializes_and_checks_database(tmp_path: Path) -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["database"] == "ready"
-    assert body["schema_version"] == 3
+    assert body["schema_version"] == 5
     assert isinstance(body["gemini"]["configured"], bool)
     assert (tmp_path / "api.db").is_file()
 
@@ -165,12 +166,23 @@ def test_score_validates_request_before_calling_engine(tmp_path: Path) -> None:
     assert response.status_code == 422
 
 
+def test_score_rejects_posting_without_verified_us_location(tmp_path: Path) -> None:
+    payload = score_payload()
+    payload["posting"].pop("location")
+    with make_client(tmp_path) as client:
+        response = client.post("/api/score", json=payload)
+
+    assert response.status_code == 422
+    assert "Only verified US roles are accepted" in response.json()["detail"]
+
+
 def test_score_url_extracts_scores_and_saves_public_posting(tmp_path: Path) -> None:
     extractor = StubPostingExtractor(
         JobPostingFacts(
             title="Backend Engineer",
             company="Acme",
             description="Build Python APIs.",
+            location="Los Angeles, CA",
             sponsorship_status=SponsorshipStatus.YES,
             company_size=500,
             base_salary_max_usd=180000,
@@ -202,6 +214,36 @@ def test_score_url_explains_extraction_failure(tmp_path: Path) -> None:
     assert "browser extension" in response.json()["detail"]
 
 
+def test_score_url_rejects_closed_posting(tmp_path: Path) -> None:
+    extractor = StubPostingExtractor(
+        ClosedJobPostingError("https://jobs.example.com/roles/42 is closed")
+    )
+    with make_client(tmp_path, posting_extractor=extractor) as client:
+        response = client.post(
+            "/api/score-url",
+            json={"url": "https://jobs.example.com/roles/42"},
+        )
+
+    assert response.status_code == 422
+    assert "closed or expired" in response.json()["detail"]
+
+
+def test_availability_check_hides_a_stored_closed_job(tmp_path: Path) -> None:
+    extractor = StubPostingExtractor(
+        ClosedJobPostingError("Page reports closure: This job has closed.")
+    )
+    with make_client(tmp_path, posting_extractor=extractor) as client:
+        job_id = client.post(
+            "/api/score", json=score_payload(with_url=True)
+        ).json()["job_id"]
+        response = client.post(f"/api/jobs/{job_id}/check-availability")
+        jobs = client.get("/api/jobs").json()
+
+    assert response.status_code == 200
+    assert response.json()["closed"] is True
+    assert jobs == []
+
+
 def test_score_url_rejects_local_network_targets(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         response = client.post(
@@ -211,6 +253,25 @@ def test_score_url_rejects_local_network_targets(tmp_path: Path) -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Enter a public job-posting URL."
+
+
+def test_score_url_rejects_non_us_posting(tmp_path: Path) -> None:
+    extractor = StubPostingExtractor(
+        JobPostingFacts(
+            title="Backend Engineer",
+            company="Acme India",
+            description="Build Python APIs.",
+            location="Bengaluru, India",
+        )
+    )
+    with make_client(tmp_path, posting_extractor=extractor) as client:
+        response = client.post(
+            "/api/score-url",
+            json={"url": "https://jobs.example.com/roles/india"},
+        )
+
+    assert response.status_code == 422
+    assert "United States" in response.json()["detail"]
 
 
 def test_scored_job_is_listed_and_lifecycle_can_change(tmp_path: Path) -> None:
@@ -231,6 +292,42 @@ def test_scored_job_is_listed_and_lifecycle_can_change(tmp_path: Path) -> None:
         )
         assert update_response.status_code == 200
         assert update_response.json()["status"] == "APPLIED"
+
+
+def test_scored_job_outreach_matches_digest_guidance(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        job_id = client.post(
+            "/api/score", json=score_payload(with_url=True)
+        ).json()["job_id"]
+        response = client.get(f"/api/jobs/{job_id}/outreach")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["company"] == "Acme"
+    assert body["location"] == "Los Angeles, CA"
+    assert body["strategy"].startswith("Apply now")
+    assert "recruiter or hiring manager" in body["recruiter_message"]
+
+
+def test_hard_rejected_job_can_be_deleted_but_qualified_job_cannot(
+    tmp_path: Path,
+) -> None:
+    rejected_payload = score_payload(with_url=True)
+    rejected_payload["posting"]["sponsorship_status"] = "NO"
+    rejected_payload["posting"]["description"] = "No visa sponsorship is available."
+    rejected_payload["url"] = "https://example.com/jobs/rejected"
+    with make_client(tmp_path) as client:
+        rejected_id = client.post("/api/score", json=rejected_payload).json()["job_id"]
+        qualified_id = client.post(
+            "/api/score", json=score_payload(with_url=True)
+        ).json()["job_id"]
+
+        rejected_response = client.delete(f"/api/jobs/{rejected_id}")
+        qualified_response = client.delete(f"/api/jobs/{qualified_id}")
+
+        assert rejected_response.status_code == 204
+        assert qualified_response.status_code == 409
+        assert [job["id"] for job in client.get("/api/jobs").json()] == [qualified_id]
 
 
 def test_skipping_job_requires_reason(tmp_path: Path) -> None:
@@ -256,8 +353,14 @@ def test_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "APPLICATION COMMAND CENTER" in response.text
     assert "Score a job from its link" in response.text
     assert "USE RESUME" in response.text
+    assert "APPLICATION PLAYBOOK" in response.text
+    assert "Outreach details" in response.text
     assert script.status_code == 200
     assert "loadJobs" in script.text
     assert 'fetch("/api/score-url"' in script.text
     assert "recommended_resume" in script.text
+    assert "/outreach`" in script.text
+    assert "job.location_tier" in script.text
+    assert "Delete rejected" in response.text
+    assert "deleteRejectedJob" in script.text
     assert 'classList.toggle("current", isCurrentStatus)' in script.text

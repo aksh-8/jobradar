@@ -15,6 +15,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pydantic import BaseModel, ConfigDict
 
 from backend.database import database_connection
+from backend.job_availability import is_closed_job
+from backend.location_policy import (
+    classify_us_location,
+    is_us_based,
+    us_location_sort_key,
+)
 from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
 from backend.scoring_engine import ScoringResult
 
@@ -58,6 +64,8 @@ class StoredJob(BaseModel):
     url: str
     title: str
     company: str
+    location: str | None
+    location_tier: str | None
     overall_score: int | None
     score_details: dict[str, object] | None
     status: JobStatus
@@ -76,6 +84,28 @@ class PendingDigestJob(BaseModel):
     url: str
     posting: JobPostingFacts
     score: ScoringResult
+
+
+class ScoredJobDetails(BaseModel):
+    """Complete persisted facts needed for local outreach generation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: int
+    url: str
+    posting: JobPostingFacts
+    score: ScoringResult
+
+
+class AvailabilityCheckCandidate(BaseModel):
+    """A visible job due for a bounded live availability refresh."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: int
+    title: str
+    url: str
+    source: str
 
 
 class FollowUpReminder(BaseModel):
@@ -98,6 +128,10 @@ class ExistingJobMatch:
     job_id: int
     changed: bool
     matched_by: str
+
+
+class JobDeletionNotAllowedError(ValueError):
+    """Raised when a dashboard deletion does not meet the hard-rejection gate."""
 
 
 def canonical_job_url(url: str) -> str:
@@ -249,7 +283,109 @@ async def touch_job_seen(
 ) -> None:
     async with database_connection(database_path) as connection:
         await connection.execute(
-            "UPDATE jobs SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?", (job_id,)
+            """
+            UPDATE jobs
+            SET last_seen_at = CURRENT_TIMESTAMP, closed_at = NULL,
+                closure_reason = NULL, availability_checked_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (job_id,),
+        )
+        await connection.commit()
+
+
+async def mark_job_closed_by_url(
+    url: str,
+    reason: str,
+    *,
+    source_job_id: str | None = None,
+    ats_name: str | None = None,
+    database_path: str | Path | None = None,
+) -> int | None:
+    """Mark a previously stored posting unavailable without changing its lifecycle."""
+
+    canonical_url = canonical_job_url(url)
+    key = deduplication_key(canonical_url)
+    clauses = ["deduplication_key = ?", "canonical_url = ?", "url = ?"]
+    parameters: list[str] = [key, canonical_url, canonical_url]
+    if source_job_id and ats_name:
+        clauses.append("(ats_name = ? AND source_job_id = ?)")
+        parameters.extend((ats_name.casefold(), source_job_id))
+    async with database_connection(database_path) as connection:
+        cursor = await connection.execute(
+            f"SELECT id FROM jobs WHERE {' OR '.join(clauses)} LIMIT 1",
+            tuple(parameters),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        await connection.execute(
+            """
+            UPDATE jobs
+            SET closed_at = CURRENT_TIMESTAMP, closure_reason = ?,
+                availability_checked_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (reason.strip() or "Posting is closed.", row["id"]),
+        )
+        await connection.commit()
+        return int(row["id"])
+
+
+async def list_availability_check_candidates(
+    *,
+    limit: int = 20,
+    minimum_age_hours: int = 12,
+    database_path: str | Path | None = None,
+) -> tuple[AvailabilityCheckCandidate, ...]:
+    """Return the highest-value open roles whose live page check is stale."""
+
+    if limit < 1 or minimum_age_hours < 1:
+        raise ValueError("Availability check limit and age must be positive.")
+    async with database_connection(database_path) as connection:
+        cursor = await connection.execute(
+            """
+            SELECT id, title, url, source
+            FROM jobs
+            WHERE closed_at IS NULL
+              AND status != 'SKIPPED'
+              AND (
+                  availability_checked_at IS NULL
+                  OR datetime(availability_checked_at) <= datetime('now', ?)
+              )
+            ORDER BY overall_score DESC, last_seen_at DESC, id DESC
+            LIMIT ?
+            """,
+            (f"-{minimum_age_hours} hours", limit),
+        )
+        rows = await cursor.fetchall()
+    return tuple(AvailabilityCheckCandidate.model_validate(dict(row)) for row in rows)
+
+
+async def get_availability_check_candidate(
+    job_id: int,
+    *,
+    database_path: str | Path | None = None,
+) -> AvailabilityCheckCandidate | None:
+    async with database_connection(database_path) as connection:
+        cursor = await connection.execute(
+            "SELECT id, title, url, source FROM jobs WHERE id = ? AND closed_at IS NULL",
+            (job_id,),
+        )
+        row = await cursor.fetchone()
+    return AvailabilityCheckCandidate.model_validate(dict(row)) if row else None
+
+
+async def mark_job_availability_checked(
+    job_id: int,
+    *,
+    database_path: str | Path | None = None,
+) -> None:
+    async with database_connection(database_path) as connection:
+        await connection.execute(
+            "UPDATE jobs SET availability_checked_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (job_id,),
         )
         await connection.commit()
 
@@ -384,6 +520,10 @@ async def save_scored_job(
                 raise RuntimeError("Saved job could not be retrieved.")
             job_id = int(cursor.lastrowid)
             await connection.execute(
+                "UPDATE jobs SET availability_checked_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (job_id,),
+            )
+            await connection.execute(
                 "INSERT INTO job_events (job_id, event_type) VALUES (?, 'DISCOVERED')",
                 (job_id,),
             )
@@ -418,7 +558,9 @@ async def save_scored_job(
                     employment_type = ?, workplace_type = ?, date_posted = ?,
                     valid_through = ?, salary_min_usd = ?, salary_max_usd = ?,
                     company_size = ?, sponsorship_status = ?, overall_score = ?,
-                    score_details = ?, last_seen_at = CURRENT_TIMESTAMP,
+                    score_details = ?, closed_at = NULL, closure_reason = NULL,
+                    availability_checked_at = CURRENT_TIMESTAMP,
+                    last_seen_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -441,10 +583,12 @@ async def save_scored_job(
 async def list_jobs(
     *,
     status: JobStatus | None = None,
+    us_only: bool = False,
     database_path: str | Path | None = None,
 ) -> tuple[StoredJob, ...]:
     query = """
-        SELECT id, source, url, title, company, overall_score, score_details,
+        SELECT id, source, url, title, company, location, workplace_type,
+               description, valid_through, closed_at, overall_score, score_details,
                status, skip_reason, first_discovered_at, last_seen_at, updated_at
         FROM jobs
     """
@@ -457,6 +601,22 @@ async def list_jobs(
     async with database_connection(database_path) as connection:
         cursor = await connection.execute(query, parameters)
         rows = await cursor.fetchall()
+    rows = [row for row in rows if not _row_is_closed(row)]
+    if us_only:
+        rows = [
+            row
+            for row in rows
+            if is_us_based(row["location"], row["workplace_type"], row["description"])
+        ]
+        rows.sort(
+            key=lambda row: (
+                *us_location_sort_key(
+                    row["location"], row["workplace_type"], row["description"]
+                ),
+                -(row["overall_score"] if row["overall_score"] is not None else -1),
+                -row["id"],
+            )
+        )
     return tuple(_stored_job(row) for row in rows)
 
 
@@ -472,7 +632,8 @@ async def list_pending_digest_jobs(
             """
             SELECT id, url, title, company, description, salary_min_usd,
                    salary_max_usd, company_size, sponsorship_status, score_details,
-                   location, employment_type, workplace_type, date_posted, valid_through
+                   location, employment_type, workplace_type, date_posted, valid_through,
+                   closed_at
             FROM jobs
             WHERE digest_sent_at IS NULL
               AND source IN (
@@ -480,6 +641,7 @@ async def list_pending_digest_jobs(
                   'lever', 'ashby', 'company_career'
               )
               AND status != 'SKIPPED'
+              AND closed_at IS NULL
               AND overall_score >= ?
             ORDER BY overall_score DESC, first_discovered_at, id
             """,
@@ -491,28 +653,65 @@ async def list_pending_digest_jobs(
     for row in rows:
         if not row["description"] or not row["score_details"]:
             continue
+        if _row_is_closed(row):
+            continue
+        if not is_us_based(
+            row["location"], row["workplace_type"], row["description"]
+        ):
+            continue
         pending.append(
             PendingDigestJob(
                 id=row["id"],
                 url=row["url"],
-                posting=JobPostingFacts(
-                    title=row["title"],
-                    company=row["company"],
-                    description=row["description"],
-                    location=row["location"],
-                    employment_type=row["employment_type"],
-                    workplace_type=row["workplace_type"],
-                    date_posted=row["date_posted"],
-                    valid_through=row["valid_through"],
-                    sponsorship_status=SponsorshipStatus(row["sponsorship_status"]),
-                    company_size=row["company_size"],
-                    base_salary_min_usd=row["salary_min_usd"],
-                    base_salary_max_usd=row["salary_max_usd"],
-                ),
+                posting=_posting_from_row(row),
                 score=_scoring_result(row["score_details"]),
             )
         )
+    pending.sort(
+        key=lambda job: (
+            *us_location_sort_key(
+                job.posting.location,
+                job.posting.workplace_type,
+                job.posting.description,
+            ),
+            -job.score.overall_score,
+        )
+    )
     return tuple(pending)
+
+
+async def get_scored_job_details(
+    job_id: int,
+    *,
+    database_path: str | Path | None = None,
+) -> ScoredJobDetails | None:
+    """Load complete facts for one scored job without exposing them in job lists."""
+
+    async with database_connection(database_path) as connection:
+        cursor = await connection.execute(
+            """
+            SELECT id, url, title, company, description, salary_min_usd,
+                   salary_max_usd, company_size, sponsorship_status, score_details,
+                   location, employment_type, workplace_type, date_posted, valid_through,
+                   closed_at
+            FROM jobs WHERE id = ?
+            """,
+            (job_id,),
+        )
+        row = await cursor.fetchone()
+    if row is None or not row["description"] or not row["score_details"]:
+        return None
+    if _row_is_closed(row):
+        return None
+    posting = _posting_from_row(row)
+    if not is_us_based(posting.location, posting.workplace_type, posting.description):
+        return None
+    return ScoredJobDetails(
+        id=row["id"],
+        url=row["url"],
+        posting=posting,
+        score=_scoring_result(row["score_details"]),
+    )
 
 
 async def mark_digest_jobs_sent(
@@ -541,12 +740,14 @@ async def list_due_follow_ups(
     async with database_connection(database_path) as connection:
         cursor = await connection.execute(
             """
-            SELECT id, company, title, url, applied_at, follow_up_due_date
+            SELECT id, company, title, url, applied_at, follow_up_due_date,
+                   location, workplace_type, description, valid_through, closed_at
             FROM jobs
             WHERE status = 'APPLIED'
               AND response_received = 0
               AND follow_up_sent = 0
               AND follow_up_due_date IS NOT NULL
+              AND closed_at IS NULL
               AND datetime(follow_up_due_date) <= datetime('now')
             ORDER BY follow_up_due_date, id
             """
@@ -562,6 +763,8 @@ async def list_due_follow_ups(
             follow_up_due_date=row["follow_up_due_date"],
         )
         for row in rows
+        if is_us_based(row["location"], row["workplace_type"], row["description"])
+        and not _row_is_closed(row)
     )
 
 
@@ -591,16 +794,24 @@ async def weekly_missing_skills(
     async with database_connection(database_path) as connection:
         cursor = await connection.execute(
             """
-            SELECT score_details
+            SELECT score_details, location, workplace_type, description,
+                   valid_through, closed_at
             FROM jobs
             WHERE score_details IS NOT NULL
               AND status != 'SKIPPED'
+              AND closed_at IS NULL
               AND datetime(first_discovered_at) >= datetime('now', '-7 days')
             """
         )
         rows = await cursor.fetchall()
     counts: dict[str, tuple[str, int]] = {}
     for row in rows:
+        if _row_is_closed(row):
+            continue
+        if not is_us_based(
+            row["location"], row["workplace_type"], row["description"]
+        ):
+            continue
         result = _scoring_result(row["score_details"])
         for skill in result.missing_requirements:
             key = skill.casefold().strip()
@@ -610,6 +821,36 @@ async def weekly_missing_skills(
             counts[key] = (display, count + 1)
     ordered = sorted(counts.values(), key=lambda item: (-item[1], item[0].casefold()))
     return tuple(ordered[:limit])
+
+
+async def delete_hard_rejected_job(
+    job_id: int,
+    *,
+    database_path: str | Path | None = None,
+) -> bool:
+    """Delete only a deterministic hard rejection and its cascaded event history."""
+
+    async with database_connection(database_path) as connection:
+        cursor = await connection.execute(
+            "SELECT status, score_details FROM jobs WHERE id = ?",
+            (job_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return False
+        score = _scoring_result(row["score_details"]) if row["score_details"] else None
+        allowed = bool(
+            score is not None
+            and score.verdict.value == "REJECTED"
+            and score.hard_flags
+        )
+        if not allowed:
+            raise JobDeletionNotAllowedError(
+                "Only jobs rejected by deterministic hard-filter policy can be deleted."
+            )
+        await connection.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        await connection.commit()
+        return True
 
 
 async def update_job_status(
@@ -664,7 +905,8 @@ async def update_job_status(
         await connection.commit()
         cursor = await connection.execute(
             """
-            SELECT id, source, url, title, company, overall_score, score_details,
+            SELECT id, source, url, title, company, location, workplace_type,
+                   description, overall_score, score_details,
                    status, skip_reason, first_discovered_at, last_seen_at, updated_at
             FROM jobs WHERE id = ?
             """,
@@ -676,12 +918,17 @@ async def update_job_status(
 
 def _stored_job(row) -> StoredJob:
     raw_details = row["score_details"]
+    tier = classify_us_location(
+        row["location"], row["workplace_type"], row["description"]
+    )
     return StoredJob(
         id=row["id"],
         source=row["source"],
         url=row["url"],
         title=row["title"],
         company=row["company"],
+        location=row["location"],
+        location_tier=tier.value if tier is not None else None,
         overall_score=row["overall_score"],
         score_details=json.loads(raw_details) if raw_details else None,
         status=JobStatus(row["status"]),
@@ -689,6 +936,32 @@ def _stored_job(row) -> StoredJob:
         first_discovered_at=row["first_discovered_at"],
         last_seen_at=row["last_seen_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _row_is_closed(row) -> bool:
+    keys = set(row.keys())
+    return is_closed_job(
+        valid_through=row["valid_through"] if "valid_through" in keys else None,
+        page_text=row["description"] if "description" in keys else None,
+        closed_at=row["closed_at"] if "closed_at" in keys else None,
+    )
+
+
+def _posting_from_row(row) -> JobPostingFacts:
+    return JobPostingFacts(
+        title=row["title"],
+        company=row["company"],
+        description=row["description"],
+        location=row["location"],
+        employment_type=row["employment_type"],
+        workplace_type=row["workplace_type"],
+        date_posted=row["date_posted"],
+        valid_through=row["valid_through"],
+        sponsorship_status=SponsorshipStatus(row["sponsorship_status"]),
+        company_size=row["company_size"],
+        base_salary_min_usd=row["salary_min_usd"],
+        base_salary_max_usd=row["salary_max_usd"],
     )
 
 

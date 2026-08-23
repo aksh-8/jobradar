@@ -69,6 +69,13 @@ async def test_search_extract_score_digest_deliver_and_list(tmp_path: Path) -> N
                   "title": "Platform Engineer",
                   "hiringOrganization": {"name": "Canopy Systems"},
                   "description": "Build Python cloud services. Visa sponsorship is available.",
+                  "jobLocation": {
+                    "address": {
+                      "addressLocality": "Los Angeles",
+                      "addressRegion": "CA",
+                      "addressCountry": "US"
+                    }
+                  },
                   "baseSalary": {
                     "currency": "USD",
                     "value": {"minValue": 155000, "maxValue": 195000, "unitText": "YEAR"}
@@ -194,6 +201,7 @@ async def test_invalid_primary_output_falls_back_to_ollama_through_api(
                     "title": "Platform Engineer",
                     "company": "Canopy Systems",
                     "description": "Build Python commercial cloud services.",
+                    "location": "Los Angeles, CA",
                     "sponsorship_status": "YES",
                     "company_size": 500,
                     "base_salary_max_usd": 180000,

@@ -26,8 +26,9 @@ ROLE_FAMILIES = (
 LOCATION_TIERS = (
     "Los Angeles, California",
     "Greater Los Angeles, California",
-    "California",
     "Remote, United States",
+    "California",
+    "East Coast, United States",
     "United States",
 )
 

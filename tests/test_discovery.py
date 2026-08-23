@@ -10,6 +10,7 @@ from agent.discovery import (
     _query_result_budgets,
     configured_queries,
 )
+from agent.posting_extractor import ClosedJobPostingError
 from agent.search_providers import SearchResult
 from backend.job_store import JobStatus, list_jobs
 from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
@@ -39,6 +40,7 @@ class StubExtractor:
             title=result.title,
             company="Acme",
             description=descriptions[result.title],
+            location="Los Angeles, CA",
             sponsorship_status=(
                 SponsorshipStatus.NO
                 if result.title == "Rejected"
@@ -141,6 +143,67 @@ async def test_shared_scoring_budget_defers_only_model_scored_postings(
     assert provider.calls == 1
     assert report.deferred_results == 1
     assert report.rejected_results == 1
+
+
+@pytest.mark.asyncio
+async def test_discovery_rejects_non_us_postings_before_scoring(tmp_path: Path) -> None:
+    class ForeignExtractor(StubExtractor):
+        async def fetch(self, result: SearchResult) -> JobPostingFacts:
+            posting = await super().fetch(result)
+            return posting.model_copy(update={"location": "Bengaluru, India"})
+
+    provider = StubAssessmentProvider()
+    agent = DiscoveryAgent(
+        search_provider=StubSearch(),
+        extractor=ForeignExtractor(),
+        scoring_engine=ScoringEngine(provider),
+        resume=ready_resume(),
+        database_path=tmp_path / "foreign.db",
+    )
+
+    report = await agent.run(("jobs",), limit=10)
+
+    assert report.rejected_results == 3
+    assert provider.calls == 0
+    assert await list_jobs(database_path=tmp_path / "foreign.db") == ()
+
+
+@pytest.mark.asyncio
+async def test_discovery_marks_a_previously_saved_job_closed(tmp_path: Path) -> None:
+    class SingleSearch:
+        name = "serpapi_google_jobs"
+
+        async def search(self, query: str, *, limit: int):
+            return (SearchResult(title="Strong", url="https://example.com/strong"),)
+
+    class ClosedExtractor:
+        async def fetch(self, result: SearchResult) -> JobPostingFacts:
+            raise ClosedJobPostingError(
+                f"{result.url} is closed: Page reports closure: This job has closed."
+            )
+
+    path = tmp_path / "closed.db"
+    open_agent = DiscoveryAgent(
+        search_provider=SingleSearch(),
+        extractor=StubExtractor(),
+        scoring_engine=ScoringEngine(StubAssessmentProvider()),
+        resume=ready_resume(),
+        database_path=path,
+    )
+    await open_agent.run(("jobs",), limit=1)
+    assert len(await list_jobs(database_path=path)) == 1
+
+    closed_agent = DiscoveryAgent(
+        search_provider=SingleSearch(),
+        extractor=ClosedExtractor(),
+        scoring_engine=ScoringEngine(StubAssessmentProvider()),
+        resume=ready_resume(),
+        database_path=path,
+    )
+    report = await closed_agent.run(("jobs",), limit=1)
+
+    assert report.rejected_results == 1
+    assert await list_jobs(database_path=path) == ()
 
 
 def test_configured_queries_accepts_pipe_separated_environment(monkeypatch) -> None:

@@ -3,7 +3,12 @@
 import httpx
 import pytest
 
-from agent.posting_extractor import PostingExtractionError, PostingExtractor, extract_posting
+from agent.posting_extractor import (
+    ClosedJobPostingError,
+    PostingExtractionError,
+    PostingExtractor,
+    extract_posting,
+)
 from agent.search_providers import SearchResult
 from backend.red_flag_scanner import SponsorshipStatus
 
@@ -83,6 +88,37 @@ def test_extracts_efinancialcareers_company_info() -> None:
 def test_rejects_pages_without_required_fields() -> None:
     with pytest.raises(PostingExtractionError, match="company, description"):
         extract_posting("<h1>Backend Engineer</h1>", result())
+
+
+def test_rejects_closed_jobright_style_page_before_scoring() -> None:
+    html = """
+    <main>
+      <p>This job has closed.</p>
+      <h1>Software Engineer, Level 3</h1>
+      <div data-company-name>Snap Inc.</div>
+      <div class="job-description">Build scalable backend services.</div>
+    </main>
+    """
+
+    with pytest.raises(ClosedJobPostingError, match="This job has closed"):
+        extract_posting(html, result())
+
+
+def test_rejects_expired_structured_posting() -> None:
+    html = """
+    <script type="application/ld+json">
+    {
+      "@type": "JobPosting",
+      "title": "Backend Engineer",
+      "hiringOrganization": {"name": "Acme"},
+      "description": "Build APIs.",
+      "validThrough": "2020-01-01"
+    }
+    </script>
+    """
+
+    with pytest.raises(ClosedJobPostingError, match="expired"):
+        extract_posting(html, result())
 
 
 @pytest.mark.asyncio

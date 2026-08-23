@@ -30,11 +30,22 @@ Open `http://127.0.0.1:8000/dashboard/` while Uvicorn is running.
 
 - Paste a public job-posting URL into **Quick score** to extract, score, and save it.
 - Each job card shows **Use resume** with the selected resume variant.
+- **Outreach details** opens the digest-equivalent strategy, recruiter message,
+  referral request, cold email, missing skills, and suggested questions.
 - **New**, **Viewed**, **Applied**, and **Skipped** filter lifecycle states.
 - Search matches title and company.
 - **Mark viewed** and **Applied** persist an event in SQLite.
 - **Skip** requires a reason.
+- Hard-policy rejections show **Delete rejected**. The API revalidates the
+  stored verdict and hard flags before permanently deleting the job and its
+  cascaded event history.
 - Re-scoring the same canonical URL refreshes its score without resetting its lifecycle state.
+
+The dashboard includes verified-US roles only. Its fixed location order is Los
+Angeles, US remote, California, East Coast, then the rest of the United States.
+Historical foreign rows remain in SQLite for audit history but are excluded from
+the dashboard, pending email digests, follow-ups, and missing-skill summaries.
+Closed and expired roles are likewise excluded from all current-work surfaces.
 
 Some authenticated or bot-protected pages block backend extraction. Open those
 pages in Chrome or Edge and use the JobRadar extension, which extracts the
@@ -56,7 +67,10 @@ Override queries or limit:
 python -m agent.discovery --query "backend engineer United States" --limit 10
 ```
 
-The agent searches, canonicalizes URLs, skips known jobs, extracts facts, applies hard filters, scores remaining roles, persists results, and prints the digest.
+The agent searches, canonicalizes URLs, extracts facts, rejects closed/expired
+postings and postings without verified United States location evidence, skips
+known jobs, applies hard filters, scores remaining roles, persists results, and
+prints the digest.
 
 Without `--query`, the runner uses the scheduled multi-source plan:
 
@@ -77,6 +91,11 @@ changed. Dry-run prevents email but still persists discovery and track state.
 The result budget is shared fairly across every query. Model-scored work is
 separately capped by `MAX_SCORING_JOBS_PER_RUN` (default 50); excess eligible
 postings are printed as `deferred` and remain available for a later run.
+
+Each scheduled invocation also rechecks up to `AVAILABILITY_CHECK_LIMIT`
+score-prioritized saved roles when their last check is older than
+`AVAILABILITY_CHECK_INTERVAL_HOURS`. A confirmed closure is hidden immediately;
+an inaccessible page remains visible rather than being guessed closed.
 
 ## Send the digest
 

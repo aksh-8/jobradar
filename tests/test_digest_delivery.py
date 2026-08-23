@@ -18,6 +18,7 @@ def opportunity() -> DigestOpportunity:
         title="Backend <Engineer>",
         company="Acme & Co",
         description="Build Python services.",
+        location="Los Angeles, CA",
         sponsorship_status=SponsorshipStatus.UNKNOWN,
     )
     score = ScoringResult(

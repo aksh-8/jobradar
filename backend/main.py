@@ -8,22 +8,35 @@ from contextlib import asynccontextmanager
 from ipaddress import ip_address
 from pathlib import Path
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, HttpUrl
 
-from agent.posting_extractor import PostingExtractionError, PostingExtractor
+from agent.posting_extractor import (
+    ClosedJobPostingError,
+    PostingExtractionError,
+    PostingExtractor,
+)
+from agent.outreach import build_outreach
 from agent.search_providers import SearchResult
 
 from backend.database import LATEST_SCHEMA_VERSION, database_connection, initialize_database
 from backend.job_store import (
+    JobDeletionNotAllowedError,
     JobStatus,
     StoredJob,
+    delete_hard_rejected_job,
+    get_availability_check_candidate,
+    get_scored_job_details,
     list_jobs,
+    mark_job_availability_checked,
+    mark_job_closed_by_url,
     save_scored_job,
     update_job_status,
 )
+from backend.job_availability import closure_reason
+from backend.location_policy import is_us_based
 from backend.red_flag_scanner import JobPostingFacts
 from backend.resume_store import (
     AUTO_PROFILE_ID,
@@ -94,6 +107,29 @@ class HealthResponse(ApiModel):
     schema_version: int
     gemini: ProviderHealth
     ollama: ProviderHealth
+
+
+class OutreachResponse(ApiModel):
+    """Dashboard outreach content generated from persisted scoring evidence."""
+
+    job_id: int
+    title: str
+    company: str
+    location: str | None
+    overall_score: int
+    recommended_resume: str | None
+    strategy: str
+    recruiter_message: str
+    referral_request: str
+    cold_email: str
+    missing_skills: tuple[str, ...]
+    questions: tuple[str, ...]
+
+
+class AvailabilityResponse(ApiModel):
+    job_id: int
+    closed: bool
+    reason: str | None = None
 
 
 def _configured_secret(name: str) -> bool:
@@ -206,11 +242,82 @@ def _build_routes():
         )
 
     @router.get("/api/jobs", response_model=list[StoredJob])
-    async def jobs(request: Request, status_filter: JobStatus | None = None):
+    async def jobs(
+        request: Request,
+        status_filter: JobStatus | None = None,
+        us_only: bool = True,
+    ):
         return await list_jobs(
             status=status_filter,
+            us_only=us_only,
             database_path=request.app.state.database_path,
         )
+
+    @router.get("/api/jobs/{job_id}/outreach", response_model=OutreachResponse)
+    async def job_outreach(job_id: int, request: Request) -> OutreachResponse:
+        details = await get_scored_job_details(
+            job_id,
+            database_path=request.app.state.database_path,
+        )
+        if details is None:
+            raise HTTPException(status_code=404, detail="US-based scored job not found.")
+        guidance = build_outreach(details.posting, details.score)
+        return OutreachResponse(
+            job_id=details.id,
+            title=details.posting.title,
+            company=details.posting.company,
+            location=details.posting.location,
+            overall_score=details.score.overall_score,
+            recommended_resume=details.score.recommended_resume,
+            strategy=guidance.strategy,
+            recruiter_message=guidance.recruiter_message,
+            referral_request=guidance.referral_message,
+            cold_email=guidance.cold_email,
+            missing_skills=details.score.missing_requirements,
+            questions=guidance.questions,
+        )
+
+    @router.post(
+        "/api/jobs/{job_id}/check-availability",
+        response_model=AvailabilityResponse,
+    )
+    async def check_job_availability(
+        job_id: int,
+        request: Request,
+    ) -> AvailabilityResponse:
+        candidate = await get_availability_check_candidate(
+            job_id,
+            database_path=request.app.state.database_path,
+        )
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="Open job not found.")
+        extractor: PostingExtractor = request.app.state.posting_extractor
+        try:
+            await extractor.fetch(
+                SearchResult(
+                    title=candidate.title,
+                    url=candidate.url,
+                    source=candidate.source,
+                )
+            )
+        except ClosedJobPostingError as error:
+            reason = str(error)
+            await mark_job_closed_by_url(
+                candidate.url,
+                reason,
+                database_path=request.app.state.database_path,
+            )
+            return AvailabilityResponse(job_id=job_id, closed=True, reason=reason)
+        except PostingExtractionError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not verify job availability: {error}",
+            ) from error
+        await mark_job_availability_checked(
+            job_id,
+            database_path=request.app.state.database_path,
+        )
+        return AvailabilityResponse(job_id=job_id, closed=False)
 
     @router.patch("/api/jobs/{job_id}/status", response_model=StoredJob)
     async def change_job_status(
@@ -231,11 +338,44 @@ def _build_routes():
             raise HTTPException(status_code=404, detail="Job not found.")
         return job
 
+    @router.delete("/api/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_job(job_id: int, request: Request) -> Response:
+        try:
+            deleted = await delete_hard_rejected_job(
+                job_id,
+                database_path=request.app.state.database_path,
+            )
+        except JobDeletionNotAllowedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @router.post("/api/score", response_model=ScoreResponse)
     async def score_job(
         payload: ScoreRequest,
         request: Request,
     ) -> ScoreResponse:
+        if reason := closure_reason(
+            valid_through=payload.posting.valid_through,
+            page_text=payload.posting.description,
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"This job is closed or expired: {reason}",
+            )
+        if not is_us_based(
+            payload.posting.location,
+            payload.posting.workplace_type,
+            payload.posting.description,
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "JobRadar could not verify that this role is based in the "
+                    "United States. Only verified US roles are accepted."
+                ),
+            )
         engine: ScoringEngine = request.app.state.scoring_engine
         catalog: ResumeCatalog = request.app.state.resume_catalog
         try:
@@ -294,6 +434,11 @@ def _build_routes():
                     source="dashboard-url",
                 )
             )
+        except ClosedJobPostingError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"This job is closed or expired and will not be listed: {error}",
+            ) from error
         except PostingExtractionError as error:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -303,6 +448,19 @@ def _build_routes():
                     "JobRadar browser extension instead."
                 ),
             ) from error
+
+        if not is_us_based(
+            posting.location,
+            posting.workplace_type,
+            posting.description,
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "JobRadar could not verify that this role is based in the "
+                    "United States. Only verified US roles are accepted."
+                ),
+            )
 
         return await score_job(
             ScoreRequest(

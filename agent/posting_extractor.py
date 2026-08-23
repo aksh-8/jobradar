@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from agent.search_providers import SearchResult
+from backend.job_availability import closure_reason
 from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
 
 PUBLIC_PAGE_HEADERS = {
@@ -25,6 +26,10 @@ PUBLIC_PAGE_HEADERS = {
 
 class PostingExtractionError(RuntimeError):
     """Raised when a result page lacks the facts required for safe scoring."""
+
+
+class ClosedJobPostingError(PostingExtractionError):
+    """Raised when authoritative evidence says a posting is unavailable."""
 
 
 class PostingExtractor:
@@ -46,6 +51,11 @@ class PostingExtractor:
                     f"Authoritative source {result.url} omitted company or description."
                 )
             searchable = f"{result.title}\n{result.company}\n{result.description}"
+            if reason := closure_reason(
+                valid_through=result.valid_through,
+                page_text=searchable,
+            ):
+                raise ClosedJobPostingError(f"{result.url} is closed: {reason}")
             return JobPostingFacts(
                 title=result.title,
                 company=result.company,
@@ -80,6 +90,12 @@ class PostingExtractor:
 def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
     soup = BeautifulSoup(html, "html.parser")
     structured = next(_job_postings(soup), {})
+    valid_through = _text(structured.get("validThrough")) or None
+    if reason := closure_reason(
+        valid_through=valid_through,
+        page_text=soup.get_text(" "),
+    ):
+        raise ClosedJobPostingError(f"{result.url} is closed: {reason}")
     title = _text(structured.get("title")) or _first_text(soup, ("h1", "title"))
     organization = structured.get("hiringOrganization")
     company = (
@@ -142,7 +158,7 @@ def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
         employment_type=_employment_type(structured.get("employmentType")),
         workplace_type=workplace_type,
         date_posted=_text(structured.get("datePosted")) or None,
-        valid_through=_text(structured.get("validThrough")) or None,
+        valid_through=valid_through,
         sponsorship_status=_sponsorship(searchable),
         **salary,
     )

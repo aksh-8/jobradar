@@ -42,6 +42,8 @@ async def test_initialize_database_creates_schema_and_is_idempotent(
             (1, "create_job_tracking_schema"),
             (2, "add_digest_and_follow_up_tracking"),
             (3, "add_multisource_discovery_identity"),
+            (4, "add_job_availability_tracking"),
+            (5, "add_availability_audit_schedule"),
         ]
 
 

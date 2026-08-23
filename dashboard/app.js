@@ -5,6 +5,8 @@ const jobsElement = document.getElementById("jobs");
 const notice = document.getElementById("notice");
 const urlScoreForm = document.getElementById("url-score-form");
 const urlScoreResult = document.getElementById("url-score-result");
+const outreachOverlay = document.getElementById("outreach-overlay");
+let outreachReturnFocus = null;
 
 function showNotice(message = "") {
   notice.textContent = message;
@@ -51,7 +53,17 @@ function render() {
     card.querySelector("h2").textContent = job.title;
     card.querySelector(".status").textContent = job.status;
     card.querySelector(".open-job").href = job.url;
+    card.querySelector(".job-location").textContent = job.location_tier
+      ? `${job.location_tier} • ${job.location}`
+      : job.location || "US location";
     const scoreDetails = details(job);
+    const deleteButton = card.querySelector(".delete-rejected");
+    const hardRejected = scoreDetails.verdict === "REJECTED"
+      && (scoreDetails.hard_flags || []).length > 0;
+    deleteButton.classList.toggle("hidden", !hardRejected);
+    if (hardRejected) {
+      deleteButton.addEventListener("click", () => deleteRejectedJob(job));
+    }
     card.querySelector(".resume-note strong").textContent = scoreDetails.recommended_resume
       || scoreDetails.resume_profile_id
       || "Not recorded";
@@ -64,6 +76,9 @@ function render() {
     }));
     card.querySelector(".rationale").textContent = (scoreDetails.rationale || []).join(" ")
       || "No scoring rationale is available.";
+    card.querySelector(".outreach-button").addEventListener("click", (event) => {
+      openOutreach(job, event.currentTarget);
+    });
     for (const button of card.querySelectorAll("button[data-action]")) {
       const isCurrentStatus = button.dataset.action === job.status;
       button.disabled = isCurrentStatus;
@@ -73,6 +88,59 @@ function render() {
     jobsElement.append(card);
   }
   updateMetrics();
+}
+
+function renderList(elementId, values, emptyMessage) {
+  const list = document.getElementById(elementId);
+  const items = values?.length ? values : [emptyMessage];
+  list.replaceChildren(...items.map((value) => {
+    const item = document.createElement("li");
+    item.textContent = value;
+    return item;
+  }));
+}
+
+async function openOutreach(job, returnFocus) {
+  outreachReturnFocus = returnFocus;
+  document.body.classList.add("panel-open");
+  outreachOverlay.classList.remove("hidden");
+  outreachOverlay.setAttribute("aria-hidden", "false");
+  document.getElementById("outreach-title").textContent = job.title;
+  document.getElementById("outreach-company").textContent = job.company;
+  document.getElementById("outreach-loading").classList.remove("hidden");
+  document.getElementById("outreach-error").classList.add("hidden");
+  document.getElementById("outreach-content").classList.add("hidden");
+  document.getElementById("close-outreach").focus();
+
+  try {
+    const response = await fetch(`/api/jobs/${job.id}/outreach`);
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || "Could not load outreach guidance.");
+    document.getElementById("outreach-score").textContent = `${body.overall_score}/100 fit`;
+    document.getElementById("outreach-resume").textContent = `Resume: ${body.recommended_resume || "Review"}`;
+    document.getElementById("outreach-location").textContent = body.location || "United States";
+    document.getElementById("outreach-strategy").textContent = body.strategy;
+    document.getElementById("outreach-recruiter").textContent = body.recruiter_message;
+    document.getElementById("outreach-referral").textContent = body.referral_request;
+    document.getElementById("outreach-cold-email").textContent = body.cold_email;
+    renderList("outreach-missing", body.missing_skills, "No material skill gaps recorded.");
+    renderList("outreach-questions", body.questions, "No additional questions recorded.");
+    document.getElementById("outreach-content").classList.remove("hidden");
+  } catch (error) {
+    const errorElement = document.getElementById("outreach-error");
+    errorElement.textContent = error.message;
+    errorElement.classList.remove("hidden");
+  } finally {
+    document.getElementById("outreach-loading").classList.add("hidden");
+  }
+}
+
+function closeOutreach() {
+  document.body.classList.remove("panel-open");
+  outreachOverlay.classList.add("hidden");
+  outreachOverlay.setAttribute("aria-hidden", "true");
+  outreachReturnFocus?.focus();
+  outreachReturnFocus = null;
 }
 
 function showUrlScoreResult(message = "", isError = false) {
@@ -113,7 +181,10 @@ async function scoreJobUrl(event) {
 async function loadJobs() {
   showNotice("");
   try {
-    const [healthResponse, jobsResponse] = await Promise.all([fetch("/health"), fetch("/api/jobs")]);
+    const [healthResponse, jobsResponse] = await Promise.all([
+      fetch("/health"),
+      fetch("/api/jobs?us_only=true"),
+    ]);
     if (!healthResponse.ok || !jobsResponse.ok) throw new Error("The JobRadar API is unavailable.");
     state.jobs = await jobsResponse.json();
     document.getElementById("health-dot").style.background = "#2b9861";
@@ -147,7 +218,44 @@ async function changeStatus(jobId, status) {
   }
 }
 
+async function deleteRejectedJob(job) {
+  const confirmed = window.confirm(
+    `Permanently remove the hard-policy rejection “${job.title}” from JobRadar?`,
+  );
+  if (!confirmed) return;
+  try {
+    const response = await fetch(`/api/jobs/${job.id}`, { method: "DELETE" });
+    if (!response.ok) {
+      const body = await response.json();
+      throw new Error(body.detail || "Could not delete this rejected job.");
+    }
+    state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
+    render();
+    showNotice("Hard-policy rejection deleted.");
+  } catch (error) {
+    showNotice(error.message);
+  }
+}
+
 document.getElementById("refresh").addEventListener("click", loadJobs);
+document.getElementById("close-outreach").addEventListener("click", closeOutreach);
+outreachOverlay.addEventListener("click", (event) => {
+  if (event.target === outreachOverlay) closeOutreach();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !outreachOverlay.classList.contains("hidden")) {
+    closeOutreach();
+  }
+});
+for (const button of document.querySelectorAll("button[data-copy]")) {
+  button.addEventListener("click", async () => {
+    const source = document.getElementById(button.dataset.copy);
+    await navigator.clipboard.writeText(source.textContent);
+    const original = button.textContent;
+    button.textContent = "Copied";
+    setTimeout(() => { button.textContent = original; }, 1200);
+  });
+}
 urlScoreForm.addEventListener("submit", scoreJobUrl);
 document.getElementById("search").addEventListener("input", (event) => {
   state.search = event.target.value.trim();

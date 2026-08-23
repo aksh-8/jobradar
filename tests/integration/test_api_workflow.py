@@ -63,6 +63,8 @@ def extension_payload() -> dict[str, object]:
             "title": "Senior Backend Engineer",
             "company": "Northstar Labs",
             "description": "Build Python and FastAPI services for commercial clients.",
+            "location": "Remote, United States",
+            "workplace_type": "Remote",
             "sponsorship_status": "YES",
             "company_size": 600,
             "base_salary_min_usd": 165000,

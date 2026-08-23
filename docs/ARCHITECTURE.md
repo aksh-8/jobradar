@@ -30,20 +30,25 @@ remain running.
 5. The extractor requires title, company, and complete description. It also
    records location, workplace type, employment type, dates, salary, and
    explicit sponsorship language when available.
-6. Existing postings are matched by ATS identity, canonical URL, normalized
+6. Explicitly closed postings and expired `validThrough` dates are rejected
+   before scoring. A bounded scheduled audit refreshes saved open roles and
+   records closure separately from application lifecycle state.
+7. Postings without verified United States location evidence are rejected
+   before deduplication, persistence, or model scoring.
+8. Existing postings are matched by ATS identity, canonical URL, normalized
    company/title/location, and finally a fuzzy content fingerprint.
-7. Unchanged postings only refresh `last_seen_at`; changed postings are rescored.
-8. The automatic resume selector chooses General, Platform, AI/Automation, or
+9. Unchanged postings only refresh `last_seen_at`; changed postings are rescored.
+10. The automatic resume selector chooses General, Platform, AI/Automation, or
    FDE using verified terms from the private profile catalog.
-9. Deterministic hard filters run before any model call.
-10. A shared per-run scoring budget admits eligible new/changed postings and
+11. Deterministic hard filters run before any model call.
+12. A shared per-run scoring budget admits eligible new/changed postings and
     defers excess work for a later run.
-11. Gemini returns a deterministic strict five-dimension assessment; Ollama is
+13. Gemini returns a deterministic strict five-dimension assessment; Ollama is
     the fallback.
-12. The application computes the weighted total and verdict.
-13. Jobs, scoring evidence, lifecycle events, digest state, and track state are
+14. The application computes the weighted total and verdict.
+15. Jobs, scoring evidence, lifecycle events, digest state, and track state are
     persisted in SQLite.
-14. One text/HTML digest compiles new roles, outreach, follow-ups, and weekly
+16. One text/HTML digest compiles new roles, outreach, follow-ups, and weekly
     skill gaps. Delivery occurs only with `--send-email`/`-SendEmail`.
 
 ## Discovery tracks
@@ -67,9 +72,9 @@ CUSTOM_CAREER_PAGES="Apple=https://jobs.apple.com/en-us/search"
 
 ATS payloads are authoritative content and are normalized without refetching the
 hosted HTML. Direct board rows are title-gated to the configured engineering
-families, and explicit international-only locations are excluded while unknown
-locations remain reviewable. Custom career results are fetched at their
-individual posting URL.
+families. A board result may proceed to extraction with incomplete location
+metadata, but it must produce verified US location evidence before persistence
+or scoring. Custom career results are fetched at their individual posting URL.
 
 ### Track B: Google Jobs, every four hours
 
@@ -78,7 +83,7 @@ SerpAPI is called with `engine=google_jobs`. The adapter follows
 application URL from `apply_options`. Company/ATS URLs outrank arbitrary sites,
 which outrank LinkedIn/Indeed/ZipRecruiter aggregator URLs.
 
-Five role families are crossed with five location tiers. Sponsorship language
+Five role families are crossed with six location queries. Sponsorship language
 is deliberately absent from discovery queries; it is evaluated from the actual
 posting instead.
 
@@ -94,8 +99,9 @@ Location tiers:
 
 - Los Angeles, California
 - Greater Los Angeles, California
-- California
 - Remote, United States
+- California
+- East Coast, United States
 - United States
 
 ### Track C: Brave gaps, every twelve hours
@@ -217,19 +223,41 @@ Verdicts:
 - No blocking review and weighted score at least 60: `QUALIFIED / APPLY+REFERRAL`.
 - Otherwise: `BELOW_THRESHOLD / SKIP`.
 
-## Location preference
+## United States location policy
 
-Location is not a hard filter. Digest ordering applies a non-displayed ranking
-boost of five points for Los Angeles, three for remote, and two for other
-California roles. The visible fit score is unchanged, preventing geography from
-masquerading as skills fit. Other US roles remain eligible.
+United States location eligibility is a deterministic gate. Discovery rejects
+non-US and unverified-location postings before persistence or model scoring.
+Dashboard results, pending digests, follow-ups, and weekly missing-skill reports
+also apply the gate, so historical foreign rows can remain in SQLite without
+appearing in current operator workflows.
+
+Eligible roles are ordered without changing their visible fit score:
+
+1. Los Angeles and Greater Los Angeles
+2. Remote roles explicitly available in the United States
+3. Other California roles
+4. East Coast roles
+5. The rest of the United States
+
+The classifier uses normalized posting location, workplace type, and description
+evidence. A generic `Remote` label alone is insufficient because it does not
+prove that the role accepts applicants in the United States.
 
 ## Persistence and delivery
 
 SQLite contains normalized `jobs`, immutable `job_events`, schema migrations,
-and durable discovery-track state. Qualified roles remain pending until the
-email provider succeeds, so a delivery failure does not lose a deduplicated
-role. Application status schedules a follow-up after the configured interval.
+durable discovery-track state, and independent job-availability timestamps.
+Closed roles are hidden from dashboards, digests, outreach, follow-ups, and
+skill summaries without overwriting application lifecycle state. Qualified
+roles remain pending until the email provider succeeds, so a delivery failure
+does not lose a deduplicated role. Application status schedules a follow-up
+after the configured interval.
+
+The availability audit checks a bounded, score-prioritized set of non-skipped
+roles concurrently. `AVAILABILITY_CHECK_LIMIT` defaults to 20 and
+`AVAILABILITY_CHECK_INTERVAL_HOURS` defaults to 12. Explicit page closure text
+and expired structured dates are deterministic evidence; fetch failures do not
+silently classify a role as closed.
 
 Dry-run means no email; discovery and SQLite persistence still occur. Empty
 digests are skipped unless `SEND_EMPTY_DIGEST=true`.
@@ -247,7 +275,8 @@ digests are skipped unless `SEND_EMPTY_DIGEST=true`.
 - Company-size enrichment is not implemented, so that filter activates only
   when a caller supplies a verified size.
 - Known-sponsor membership is an application heuristic, not role-level evidence.
-- Location normalization is textual rather than geocoded.
+- Location normalization is textual rather than geocoded; ambiguous or missing
+  locations are intentionally excluded until US eligibility can be verified.
 - LLM dimensions are validated but still judgment-based; calibration against
   labeled historical decisions would improve consistency.
 - The scoring ceiling controls per-run usage but is not a provider billing or

@@ -146,6 +146,23 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=4,
+        name="add_job_availability_tracking",
+        statements=(
+            "ALTER TABLE jobs ADD COLUMN closed_at TEXT",
+            "ALTER TABLE jobs ADD COLUMN closure_reason TEXT",
+            "CREATE INDEX idx_jobs_availability ON jobs(closed_at, valid_through)",
+        ),
+    ),
+    Migration(
+        version=5,
+        name="add_availability_audit_schedule",
+        statements=(
+            "ALTER TABLE jobs ADD COLUMN availability_checked_at TEXT",
+            "CREATE INDEX idx_jobs_availability_check ON jobs(availability_checked_at)",
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

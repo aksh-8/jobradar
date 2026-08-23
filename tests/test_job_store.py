@@ -8,21 +8,31 @@ import pytest
 
 from backend.database import database_connection
 from backend.job_store import (
+    JobDeletionNotAllowedError,
     JobStatus,
     canonical_job_url,
+    delete_hard_rejected_job,
     discovery_track_is_due,
     find_existing_job,
+    get_scored_job_details,
     list_due_follow_ups,
     list_jobs,
     list_pending_digest_jobs,
     mark_digest_jobs_sent,
     mark_follow_ups_sent,
+    mark_job_closed_by_url,
     record_discovery_track_run,
     save_scored_job,
     update_job_status,
     weekly_missing_skills,
 )
-from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
+from backend.red_flag_scanner import (
+    FlagSeverity,
+    JobPostingFacts,
+    RedFlag,
+    RedFlagCode,
+    SponsorshipStatus,
+)
 from backend.scoring_engine import ScoreDimensions, ScoreVerdict, ScoringResult
 
 
@@ -31,6 +41,7 @@ def posting() -> JobPostingFacts:
         title="Backend Engineer",
         company="Acme",
         description="Build Python APIs.",
+        location="Los Angeles, CA",
         sponsorship_status=SponsorshipStatus.YES,
         company_size=500,
         base_salary_max_usd=180_000,
@@ -51,6 +62,22 @@ def result(score: int = 82) -> ScoringResult:
         ),
         missing_requirements=("Kubernetes",),
         rationale=("Strong verified match.",),
+    )
+
+
+def hard_rejected_result() -> ScoringResult:
+    return ScoringResult(
+        overall_score=0,
+        verdict=ScoreVerdict.REJECTED,
+        hard_flags=(
+            RedFlag(
+                code=RedFlagCode.NO_SPONSORSHIP,
+                severity=FlagSeverity.HARD_FILTER,
+                message="No sponsorship.",
+                evidence="No visa sponsorship.",
+            ),
+        ),
+        rationale=("Rejected by deterministic hard-filter policy.",),
     )
 
 
@@ -139,6 +166,136 @@ async def test_pending_digest_jobs_are_marked_only_after_delivery(
     await mark_digest_jobs_sent((job_id,), database_path=path)
 
     assert await list_pending_digest_jobs(database_path=path) == ()
+
+
+@pytest.mark.asyncio
+async def test_us_only_jobs_hide_foreign_roles_and_follow_location_priority(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "locations.db"
+    locations = (
+        ("Austin", "Austin, TX"),
+        ("New York", "New York, NY"),
+        ("San Francisco", "San Francisco, CA"),
+        ("Remote", "Remote, United States"),
+        ("Los Angeles", "Los Angeles, CA"),
+        ("India", "Bengaluru, India"),
+    )
+    for title, location in locations:
+        await save_scored_job(
+            posting().model_copy(update={"title": title, "location": location}),
+            result(),
+            source="brave",
+            url=f"https://example.com/jobs/{title.casefold().replace(' ', '-')}",
+            database_path=path,
+        )
+
+    jobs = await list_jobs(us_only=True, database_path=path)
+
+    assert [job.title for job in jobs] == [
+        "Los Angeles",
+        "Remote",
+        "San Francisco",
+        "New York",
+        "Austin",
+    ]
+    assert [job.location_tier for job in jobs] == [
+        "Los Angeles priority",
+        "Remote — United States",
+        "California",
+        "East Coast",
+        "United States",
+    ]
+    assert all(job.title != "India" for job in jobs)
+
+
+@pytest.mark.asyncio
+async def test_pending_digest_and_details_exclude_foreign_jobs(tmp_path: Path) -> None:
+    path = tmp_path / "us-digest.db"
+    us_id = await save_scored_job(
+        posting(),
+        result(),
+        source="brave",
+        url="https://example.com/jobs/us",
+        database_path=path,
+    )
+    foreign_id = await save_scored_job(
+        posting().model_copy(update={"title": "India role", "location": "India"}),
+        result(),
+        source="brave",
+        url="https://example.com/jobs/india",
+        database_path=path,
+    )
+
+    assert [job.id for job in await list_pending_digest_jobs(database_path=path)] == [
+        us_id
+    ]
+    assert await get_scored_job_details(us_id, database_path=path) is not None
+    assert await get_scored_job_details(foreign_id, database_path=path) is None
+
+
+@pytest.mark.asyncio
+async def test_closed_and_expired_jobs_are_hidden_from_read_surfaces(tmp_path: Path) -> None:
+    path = tmp_path / "availability.db"
+    closed_id = await save_scored_job(
+        posting(),
+        result(),
+        source="serpapi_google_jobs",
+        url="https://jobright.ai/jobs/info/closed-role",
+        database_path=path,
+    )
+    await mark_job_closed_by_url(
+        "https://jobright.ai/jobs/info/closed-role?visit=alert",
+        "Page reports closure: This job has closed.",
+        database_path=path,
+    )
+    await save_scored_job(
+        posting().model_copy(update={"title": "Expired", "valid_through": "2020-01-01"}),
+        result(),
+        source="brave",
+        url="https://example.com/jobs/expired",
+        database_path=path,
+    )
+
+    assert await list_jobs(us_only=True, database_path=path) == ()
+    assert await list_pending_digest_jobs(database_path=path) == ()
+    assert await get_scored_job_details(closed_id, database_path=path) is None
+
+
+@pytest.mark.asyncio
+async def test_only_hard_policy_rejections_can_be_deleted(tmp_path: Path) -> None:
+    path = tmp_path / "delete.db"
+    rejected_id = await save_scored_job(
+        posting(),
+        hard_rejected_result(),
+        source="brave",
+        url="https://example.com/jobs/rejected",
+        database_path=path,
+    )
+    await update_job_status(
+        rejected_id,
+        JobStatus.SKIPPED,
+        skip_reason="NO_SPONSORSHIP",
+        database_path=path,
+    )
+    qualified_id = await save_scored_job(
+        posting().model_copy(update={"title": "Qualified"}),
+        result(),
+        source="brave",
+        url="https://example.com/jobs/qualified",
+        database_path=path,
+    )
+
+    with pytest.raises(JobDeletionNotAllowedError):
+        await delete_hard_rejected_job(qualified_id, database_path=path)
+    assert await delete_hard_rejected_job(rejected_id, database_path=path)
+    assert [job.id for job in await list_jobs(database_path=path)] == [qualified_id]
+    async with database_connection(path) as connection:
+        cursor = await connection.execute(
+            "SELECT COUNT(*) AS count FROM job_events WHERE job_id = ?",
+            (rejected_id,),
+        )
+        assert (await cursor.fetchone())["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -250,11 +407,12 @@ async def test_cross_source_identity_prefers_ats_then_natural_key(tmp_path: Path
 @pytest.mark.asyncio
 async def test_fuzzy_fingerprint_matches_small_description_edits(tmp_path: Path) -> None:
     path = tmp_path / "jobs.db"
+    unlocated = posting().model_copy(update={"location": None})
     await save_scored_job(
-        posting(), result(), source="brave", url="https://example.com/jobs/a",
+        unlocated, result(), source="brave", url="https://example.com/jobs/a",
         database_path=path,
     )
-    edited = posting().model_copy(
+    edited = unlocated.model_copy(
         update={"description": "Build reliable Python APIs for customers."}
     )
 

@@ -59,6 +59,27 @@ without a search API key. Track B requires SerpAPI; Track C requires Brave. A
 nonzero `deferred` count means the `MAX_SCORING_JOBS_PER_RUN` safety ceiling was
 reached, not that those roles were rejected.
 
+JobRadar is intentionally US-only. A posting is excluded when its normalized
+location and description do not verify United States eligibility. `Remote` by
+itself is ambiguous and is rejected; use a posting or canonical employer page
+that states `United States`, `US`, a US state, or a US city/state location.
+
+## A closed job still appears
+
+Reload the dashboard after the next scheduled discovery run. JobRadar rejects
+explicit closure banners and expired structured `validThrough` dates during
+normal extraction, then rechecks a bounded set of saved roles every 12 hours by
+default. Increase `AVAILABILITY_CHECK_LIMIT` cautiously if the backlog is large;
+each check fetches a real job page. Pages that block access remain visible until
+closure can be verified rather than being removed on a guess.
+
+## A historical foreign job is still in SQLite
+
+This is expected. The USA-only policy hides historical foreign records from the
+dashboard and excludes them from future digests, follow-ups, and skill-gap
+summaries. It does not delete audit history. New non-US or unverified-location
+discoveries are rejected before persistence and scoring.
+
 ## Email is not sent
 
 Email is intentionally disabled unless `--send-email` is present.

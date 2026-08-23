@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review JobRadar scores and manage applications.">
     <title>JobRadar Dashboard</title>
-    <link rel="stylesheet" href="app.css?v=20260822-2">
+    <link rel="stylesheet" href="app.css?v=20260823-1">
   </head>
   <body>
     <header class="site-header">
@@ -79,18 +79,67 @@
             <div><p class="company"></p><h2></h2></div>
             <span class="status"></span>
           </div>
+          <p class="job-location"></p>
           <p class="resume-note"><span>USE RESUME</span><strong></strong></p>
           <div class="signals"></div>
           <p class="rationale"></p>
           <div class="actions">
             <a class="open-job" target="_blank" rel="noopener noreferrer">Open job</a>
+            <button class="outreach-button" type="button">Outreach details</button>
             <button data-action="VIEWED" type="button">Mark viewed</button>
             <button data-action="APPLIED" type="button">Applied</button>
             <button data-action="SKIPPED" type="button">Skip</button>
+            <button class="delete-rejected hidden" type="button">Delete rejected</button>
           </div>
         </div>
       </article>
     </template>
-    <script src="app.js?v=20260822-2"></script>
+
+    <div id="outreach-overlay" class="outreach-overlay hidden" aria-hidden="true">
+      <aside class="outreach-panel" role="dialog" aria-modal="true" aria-labelledby="outreach-title">
+        <header class="outreach-header">
+          <div>
+            <p class="eyebrow">APPLICATION PLAYBOOK</p>
+            <h2 id="outreach-title">Outreach details</h2>
+            <p id="outreach-company" class="outreach-company"></p>
+          </div>
+          <button id="close-outreach" class="close-outreach" type="button" aria-label="Close outreach details">×</button>
+        </header>
+        <div id="outreach-loading" class="panel-notice">Loading outreach guidance…</div>
+        <div id="outreach-error" class="panel-notice error hidden" role="alert"></div>
+        <div id="outreach-content" class="outreach-content hidden">
+          <div class="outreach-meta">
+            <span id="outreach-score"></span>
+            <span id="outreach-resume"></span>
+            <span id="outreach-location"></span>
+          </div>
+          <section>
+            <h3>Strategy</h3>
+            <p id="outreach-strategy"></p>
+          </section>
+          <section>
+            <div class="section-heading"><h3>Recruiter message</h3><button data-copy="outreach-recruiter" type="button">Copy</button></div>
+            <p id="outreach-recruiter"></p>
+          </section>
+          <section>
+            <div class="section-heading"><h3>Referral request</h3><button data-copy="outreach-referral" type="button">Copy</button></div>
+            <p id="outreach-referral"></p>
+          </section>
+          <section>
+            <div class="section-heading"><h3>Cold email</h3><button data-copy="outreach-cold-email" type="button">Copy</button></div>
+            <p id="outreach-cold-email"></p>
+          </section>
+          <section>
+            <h3>Missing skills</h3>
+            <ul id="outreach-missing"></ul>
+          </section>
+          <section>
+            <h3>Questions to ask</h3>
+            <ul id="outreach-questions"></ul>
+          </section>
+        </div>
+      </aside>
+    </div>
+    <script src="app.js?v=20260823-1"></script>
   </body>
 </html>

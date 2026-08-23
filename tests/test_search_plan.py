@@ -17,6 +17,10 @@ def test_google_jobs_queries_cover_every_role_and_location_without_sponsorship()
     assert len(queries) == len(ROLE_FAMILIES) * len(LOCATION_TIERS)
     assert any("Los Angeles" in query for query in queries)
     assert any("Remote, United States" in query for query in queries)
+    assert any("East Coast, United States" in query for query in queries)
+    assert LOCATION_TIERS.index("Remote, United States") < LOCATION_TIERS.index(
+        "California"
+    )
     assert all("sponsorship" not in query.casefold() for query in queries)
 
 

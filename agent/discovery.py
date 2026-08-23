@@ -14,15 +14,22 @@ from pydantic import BaseModel, ConfigDict
 from agent.digest import Digest, DigestOpportunity, build_digest
 from agent.email_delivery import EmailSender, create_email_sender
 from agent.outreach import build_outreach
-from agent.posting_extractor import PostingExtractionError, PostingExtractor
+from agent.posting_extractor import (
+    ClosedJobPostingError,
+    PostingExtractionError,
+    PostingExtractor,
+)
 from agent.search_plan import DiscoveryTrack, configured_discovery_tracks
 from agent.search_providers import SearchProvider, create_search_provider
 from backend.job_store import (
     JobStatus,
     discovery_track_is_due,
     find_existing_job,
+    list_availability_check_candidates,
     list_due_follow_ups,
     list_pending_digest_jobs,
+    mark_job_closed_by_url,
+    mark_job_availability_checked,
     mark_digest_jobs_sent,
     mark_follow_ups_sent,
     record_discovery_track_run,
@@ -31,6 +38,7 @@ from backend.job_store import (
     update_job_status,
     weekly_missing_skills,
 )
+from backend.location_policy import is_us_based, us_location_sort_key
 from backend.resume_store import (
     AUTO_PROFILE_ID,
     ResumeCatalog,
@@ -169,9 +177,27 @@ class DiscoveryAgent:
 
                 try:
                     posting = await self.extractor.fetch(search_result)
+                except ClosedJobPostingError as error:
+                    rejected += 1
+                    await mark_job_closed_by_url(
+                        search_result.url,
+                        str(error),
+                        source_job_id=search_result.source_job_id,
+                        ats_name=search_result.ats_name,
+                        database_path=self.database_path,
+                    )
+                    continue
                 except PostingExtractionError as error:
                     extraction_failures += 1
                     errors.append(str(error))
+                    continue
+
+                if not is_us_based(
+                    posting.location,
+                    posting.workplace_type,
+                    posting.description,
+                ):
+                    rejected += 1
                     continue
 
                 existing = await find_existing_job(
@@ -247,6 +273,16 @@ class DiscoveryAgent:
                     )
                 )
 
+        opportunities.sort(
+            key=lambda item: (
+                *us_location_sort_key(
+                    item.posting.location,
+                    item.posting.workplace_type,
+                    item.posting.description,
+                ),
+                -item.score.overall_score,
+            )
+        )
         return DiscoveryReport(
             searched_results=searched,
             duplicate_results=duplicates,
@@ -277,6 +313,58 @@ def _query_result_budgets(query_count: int, limit: int) -> tuple[int, ...]:
     return tuple(base + (1 if index < remainder else 0) for index in range(query_count))
 
 
+async def audit_stored_job_availability(
+    extractor: PostingExtractor,
+    *,
+    limit: int = 20,
+    minimum_age_hours: int = 12,
+    database_path: str | Path | None = None,
+) -> tuple[int, tuple[str, ...]]:
+    """Refresh a bounded set of valuable stored roles without blocking discovery."""
+
+    candidates = await list_availability_check_candidates(
+        limit=limit,
+        minimum_age_hours=minimum_age_hours,
+        database_path=database_path,
+    )
+    semaphore = asyncio.Semaphore(5)
+
+    async def check(candidate) -> tuple[bool, str | None]:
+        async with semaphore:
+            try:
+                await extractor.fetch(
+                    SearchResult(
+                        title=candidate.title,
+                        url=candidate.url,
+                        source=candidate.source,
+                    )
+                )
+            except ClosedJobPostingError as error:
+                await mark_job_closed_by_url(
+                    candidate.url,
+                    str(error),
+                    database_path=database_path,
+                )
+                return True, None
+            except PostingExtractionError as error:
+                await mark_job_availability_checked(
+                    candidate.id,
+                    database_path=database_path,
+                )
+                return False, f"Availability check {candidate.url} failed: {error}"
+            await mark_job_availability_checked(
+                candidate.id,
+                database_path=database_path,
+            )
+            return False, None
+
+    outcomes = await asyncio.gather(*(check(candidate) for candidate in candidates))
+    return (
+        sum(1 for closed, _ in outcomes if closed),
+        tuple(error for _, error in outcomes if error is not None),
+    )
+
+
 async def run_discovery(
     *,
     queries: tuple[str, ...],
@@ -295,6 +383,13 @@ async def run_discovery(
         profile_id=os.getenv("RESUME_PROFILE_ID", AUTO_PROFILE_ID),
     )
     report = await agent.run(queries, limit=limit)
+    _, audit_errors = await audit_stored_job_availability(
+        agent.extractor,
+        limit=int(os.getenv("AVAILABILITY_CHECK_LIMIT", "20")),
+        minimum_age_hours=int(os.getenv("AVAILABILITY_CHECK_INTERVAL_HOURS", "12")),
+    )
+    if audit_errors:
+        report = report.model_copy(update={"errors": report.errors + audit_errors})
     return await _compile_and_optionally_deliver(
         report, send_email=send_email, email_sender=email_sender
     )
@@ -374,6 +469,13 @@ async def run_scheduled_discovery(
             orchestration_errors.append(message)
             failed_tracks.append(track.name)
             await record_discovery_track_run(track.name, "FAILED", error=str(error))
+
+    _, audit_errors = await audit_stored_job_availability(
+        extractor,
+        limit=int(os.getenv("AVAILABILITY_CHECK_LIMIT", "20")),
+        minimum_age_hours=int(os.getenv("AVAILABILITY_CHECK_INTERVAL_HOURS", "12")),
+    )
+    orchestration_errors.extend(audit_errors)
 
     report = _combine_reports(
         reports,

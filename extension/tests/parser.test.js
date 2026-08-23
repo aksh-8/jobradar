@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { salaryFacts, sponsorshipStatus } = require("../parser.js");
+const { locationFacts, salaryFacts, sponsorshipStatus } = require("../parser.js");
 
 test("detects explicit no-sponsorship language", () => {
   assert.equal(sponsorshipStatus("Candidates must work without sponsorship"), "NO");
@@ -27,5 +27,30 @@ test("does not mislabel hourly compensation as annual salary", () => {
   assert.deepEqual(
     salaryFacts({ value: { minValue: 70, maxValue: 90, unitText: "HOUR" } }),
     {},
+  );
+});
+
+test("extracts structured US job locations", () => {
+  assert.deepEqual(
+    locationFacts({
+      jobLocation: {
+        address: {
+          addressLocality: "Los Angeles",
+          addressRegion: "CA",
+          addressCountry: "US",
+        },
+      },
+    }),
+    { location: "Los Angeles, CA, US" },
+  );
+});
+
+test("extracts US remote applicant requirements", () => {
+  assert.deepEqual(
+    locationFacts({
+      jobLocationType: "TELECOMMUTE",
+      applicantLocationRequirements: { name: "United States" },
+    }),
+    { location: "United States", workplace_type: "Remote" },
   );
 });
