@@ -8,10 +8,9 @@ import pytest
 
 from backend.database import database_connection
 from backend.job_store import (
-    JobDeletionNotAllowedError,
     JobStatus,
     canonical_job_url,
-    delete_hard_rejected_job,
+    delete_stored_job,
     discovery_track_is_due,
     find_existing_job,
     get_scored_job_details,
@@ -263,7 +262,7 @@ async def test_closed_and_expired_jobs_are_hidden_from_read_surfaces(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_only_hard_policy_rejections_can_be_deleted(tmp_path: Path) -> None:
+async def test_any_user_selected_job_can_be_deleted(tmp_path: Path) -> None:
     path = tmp_path / "delete.db"
     rejected_id = await save_scored_job(
         posting(),
@@ -286,10 +285,9 @@ async def test_only_hard_policy_rejections_can_be_deleted(tmp_path: Path) -> Non
         database_path=path,
     )
 
-    with pytest.raises(JobDeletionNotAllowedError):
-        await delete_hard_rejected_job(qualified_id, database_path=path)
-    assert await delete_hard_rejected_job(rejected_id, database_path=path)
-    assert [job.id for job in await list_jobs(database_path=path)] == [qualified_id]
+    assert await delete_stored_job(qualified_id, database_path=path)
+    assert await delete_stored_job(rejected_id, database_path=path)
+    assert await list_jobs(database_path=path) == ()
     async with database_connection(path) as connection:
         cursor = await connection.execute(
             "SELECT COUNT(*) AS count FROM job_events WHERE job_id = ?",

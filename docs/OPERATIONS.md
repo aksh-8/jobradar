@@ -32,13 +32,19 @@ Open `http://127.0.0.1:8000/dashboard/` while Uvicorn is running.
 - Each job card shows **Use resume** with the selected resume variant.
 - **Outreach details** opens the digest-equivalent strategy, recruiter message,
   referral request, cold email, missing skills, and suggested questions.
+- Inside **Outreach details**, select **Find people** to run an on-demand Brave
+  public-web search. Results are ranked recruiter, hiring manager, then relevant
+  team member and cached for `CONTACT_CACHE_DAYS` (default 7). **Refresh
+  results** deliberately consumes a new search. Open the public profile result
+  and manually verify current employment before sending any message. JobRadar
+  does not log in to, scrape, or message through LinkedIn.
 - **New**, **Viewed**, **Applied**, and **Skipped** filter lifecycle states.
 - Search matches title and company.
 - **Mark viewed** and **Applied** persist an event in SQLite.
 - **Skip** requires a reason.
-- Hard-policy rejections show **Delete rejected**. The API revalidates the
-  stored verdict and hard flags before permanently deleting the job and its
-  cascaded event history.
+- Every role has **Delete** for manual cleanup of irrelevant results. The
+  confirmation is the final guard: deletion permanently removes the job,
+  lifecycle events, and cached contact suggestions from the local database.
 - Re-scoring the same canonical URL refreshes its score without resetting its lifecycle state.
 
 The dashboard includes verified-US roles only. Its fixed location order is Los

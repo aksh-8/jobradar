@@ -13,20 +13,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, HttpUrl
 
+from agent.contact_discovery import (
+    ContactDiscoveryError,
+    ContactSuggestion,
+    PublicContactFinder,
+)
+from agent.outreach import build_outreach
 from agent.posting_extractor import (
     ClosedJobPostingError,
     PostingExtractionError,
     PostingExtractor,
 )
-from agent.outreach import build_outreach
 from agent.search_providers import SearchResult
 
+from backend.contact_store import (
+    get_cached_contact_suggestions,
+    replace_contact_suggestions,
+)
 from backend.database import LATEST_SCHEMA_VERSION, database_connection, initialize_database
+from backend.job_availability import closure_reason
 from backend.job_store import (
-    JobDeletionNotAllowedError,
     JobStatus,
     StoredJob,
-    delete_hard_rejected_job,
+    delete_stored_job,
     get_availability_check_candidate,
     get_scored_job_details,
     list_jobs,
@@ -35,7 +44,6 @@ from backend.job_store import (
     save_scored_job,
     update_job_status,
 )
-from backend.job_availability import closure_reason
 from backend.location_policy import is_us_based
 from backend.red_flag_scanner import JobPostingFacts
 from backend.resume_store import (
@@ -132,6 +140,20 @@ class AvailabilityResponse(ApiModel):
     reason: str | None = None
 
 
+class ContactSearchRequest(ApiModel):
+    """Controls whether public contact results may be served from the local cache."""
+
+    refresh: bool = False
+
+
+class ContactSuggestionsResponse(ApiModel):
+    """Ranked public leads for manual verification and outreach."""
+
+    job_id: int
+    cached: bool
+    suggestions: tuple[ContactSuggestion, ...]
+
+
 def _configured_secret(name: str) -> bool:
     value = os.getenv(name, "").strip()
     return bool(value and not value.startswith("replace_with_"))
@@ -173,6 +195,7 @@ def create_app(
     scoring_engine: ScoringEngine | None = None,
     resume_catalog: ResumeCatalog | None = None,
     posting_extractor: PostingExtractor | None = None,
+    contact_finder: PublicContactFinder | None = None,
 ) -> FastAPI:
     """Build an application with replaceable dependencies for isolated tests."""
 
@@ -190,11 +213,12 @@ def create_app(
     application.state.scoring_engine = scoring_engine or create_default_scoring_engine()
     application.state.resume_catalog = resume_catalog or configured_resume_catalog()
     application.state.posting_extractor = posting_extractor or PostingExtractor()
+    application.state.contact_finder = contact_finder or PublicContactFinder()
     application.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
 
@@ -278,6 +302,59 @@ def _build_routes():
         )
 
     @router.post(
+        "/api/jobs/{job_id}/contacts",
+        response_model=ContactSuggestionsResponse,
+    )
+    async def job_contacts(
+        job_id: int,
+        payload: ContactSearchRequest,
+        request: Request,
+    ) -> ContactSuggestionsResponse:
+        details = await get_scored_job_details(
+            job_id,
+            database_path=request.app.state.database_path,
+        )
+        if details is None:
+            raise HTTPException(status_code=404, detail="US-based scored job not found.")
+
+        cache_days = max(1, int(os.getenv("CONTACT_CACHE_DAYS", "7")))
+        if not payload.refresh:
+            cached = await get_cached_contact_suggestions(
+                job_id,
+                max_age_days=cache_days,
+                database_path=request.app.state.database_path,
+            )
+            if cached is not None:
+                return ContactSuggestionsResponse(
+                    job_id=job_id,
+                    cached=True,
+                    suggestions=cached,
+                )
+
+        finder: PublicContactFinder = request.app.state.contact_finder
+        try:
+            suggestions = await finder.find(
+                details.posting,
+                job_url=details.url,
+                limit=max(1, int(os.getenv("CONTACT_RESULTS_PER_JOB", "3"))),
+            )
+        except ContactDiscoveryError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+            ) from error
+        await replace_contact_suggestions(
+            job_id,
+            suggestions,
+            database_path=request.app.state.database_path,
+        )
+        return ContactSuggestionsResponse(
+            job_id=job_id,
+            cached=False,
+            suggestions=suggestions,
+        )
+
+    @router.post(
         "/api/jobs/{job_id}/check-availability",
         response_model=AvailabilityResponse,
     )
@@ -340,13 +417,10 @@ def _build_routes():
 
     @router.delete("/api/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_job(job_id: int, request: Request) -> Response:
-        try:
-            deleted = await delete_hard_rejected_job(
-                job_id,
-                database_path=request.app.state.database_path,
-            )
-        except JobDeletionNotAllowedError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
+        deleted = await delete_stored_job(
+            job_id,
+            database_path=request.app.state.database_path,
+        )
         if not deleted:
             raise HTTPException(status_code=404, detail="Job not found.")
         return Response(status_code=status.HTTP_204_NO_CONTENT)

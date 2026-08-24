@@ -80,6 +80,17 @@ dashboard and excludes them from future digests, follow-ups, and skill-gap
 summaries. It does not delete audit history. New non-US or unverified-location
 discoveries are rejected before persistence and scoring.
 
+## Find people returns no contacts or an error
+
+- Confirm `BRAVE_SEARCH_API_KEY` is configured and has available quota.
+- A zero-result search is valid and is cached for `CONTACT_CACHE_DAYS`; use
+  **Refresh results** only when you intentionally want another paid/API search.
+- Public search indexes may not expose a recruiter or team member for a small
+  company. Use the suggested manual LinkedIn company-people search instead.
+- Treat every result as a lead, not verified identity data. Open it yourself and
+  confirm current company, responsibility, and role relevance before outreach.
+- JobRadar does not access authenticated LinkedIn pages or send messages.
+
 ## Email is not sent
 
 Email is intentionally disabled unless `--send-email` is present.

@@ -39,6 +39,8 @@ h1 { font-family: Georgia, "Times New Roman", serif; font-size: clamp(42px, 6vw,
 .filter.active { background: #e3eee7; color: #175b3c; font-weight: 700; }
 .search input { border: 1px solid #d5d9d4; border-radius: 8px; min-width: 220px; padding: 9px 11px; }
 .job-card { display: grid; gap: 22px; grid-template-columns: 72px 1fr; padding: 26px 4px; }
+.job-main, .job-heading > div { min-width: 0; }
+.job-heading h2, .rationale { overflow-wrap: anywhere; }
 .job-card + .job-card { border-top: 1px solid #e4e6e1; }
 .score { align-items: center; background: #edf4ef; border-radius: 12px; display: flex; flex-direction: column; height: 68px; justify-content: center; }
 .score strong { color: #176440; font-family: Georgia, serif; font-size: 28px; line-height: 1; }
@@ -56,8 +58,8 @@ h2 { font-family: Georgia, serif; font-size: 24px; font-weight: 500; margin: 0; 
 .rationale { color: #59645c; font-size: 13px; line-height: 1.55; margin: 13px 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .actions button.current { background: #1d6b47; border-color: #1d6b47; color: #fff; }
-.actions .delete-rejected { border-color: #d9aaa6; color: #9b342f; }
-.actions .delete-rejected:hover { background: #fff0ee; }
+.actions .delete-job { border-color: #d9aaa6; color: #9b342f; }
+.actions .delete-job:hover { background: #fff0ee; }
 .outreach-overlay { background: rgba(20, 31, 24, .38); inset: 0; position: fixed; z-index: 20; }
 .outreach-panel { background: #fbfaf6; box-shadow: -18px 0 60px rgba(18, 31, 23, .2); height: 100%; margin-left: auto; max-width: 520px; overflow-y: auto; padding: 28px; width: min(92vw, 520px); }
 .outreach-header { align-items: start; border-bottom: 1px solid #dfe2dc; display: flex; gap: 18px; justify-content: space-between; padding-bottom: 20px; }
@@ -79,6 +81,18 @@ h2 { font-family: Georgia, serif; font-size: 24px; font-weight: 500; margin: 0; 
 .section-heading { align-items: center; display: flex; gap: 12px; justify-content: space-between; margin-bottom: 9px; }
 .section-heading h3 { margin: 0; }
 .section-heading button { background: transparent; border: 1px solid #cbd1ca; border-radius: 6px; color: #385242; cursor: pointer; font-size: 10px; font-weight: 750; padding: 5px 8px; }
+.section-heading button:disabled { cursor: wait; opacity: .65; }
+.contact-section .section-heading { align-items: start; }
+.contact-help { font-size: 11px !important; line-height: 1.45 !important; margin-top: 5px !important; max-width: 350px; }
+.contact-status { color: #657068; font-size: 12px; margin-top: 10px; }
+.contact-status.error { color: #9b342f; }
+.contact-results { display: grid; gap: 10px; margin-top: 12px; }
+.contact-card { background: #f0f3ef; border: 1px solid #dce2dc; border-radius: 9px; padding: 12px; }
+.contact-card-head { align-items: start; display: flex; gap: 10px; justify-content: space-between; }
+.contact-card a { color: #175b3c; font-size: 14px; font-weight: 800; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.contact-type { background: #dfeae2; border-radius: 999px; color: #28513a; flex: 0 0 auto; font-size: 9px; font-weight: 800; letter-spacing: .06em; padding: 5px 7px; text-transform: uppercase; }
+.contact-title { color: #46534a !important; font-size: 12px !important; margin-top: 4px !important; }
+.contact-evidence { color: #657068 !important; font-size: 10px !important; line-height: 1.5 !important; margin-top: 8px !important; }
 .notice { background: #fff4d8; border-radius: 8px; color: #705008; margin: 14px 0; padding: 10px 12px; }
 .empty { color: #677168; padding: 70px 20px; text-align: center; }
 .empty strong { color: #28332b; font-family: Georgia, serif; font-size: 25px; }

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review JobRadar scores and manage applications.">
     <title>JobRadar Dashboard</title>
-    <link rel="stylesheet" href="app.css?v=20260823-1">
+    <link rel="stylesheet" href="app.css?v=20260823-2">
   </head>
   <body>
     <header class="site-header">
@@ -89,7 +89,7 @@
             <button data-action="VIEWED" type="button">Mark viewed</button>
             <button data-action="APPLIED" type="button">Applied</button>
             <button data-action="SKIPPED" type="button">Skip</button>
-            <button class="delete-rejected hidden" type="button">Delete rejected</button>
+            <button class="delete-job" type="button">Delete</button>
           </div>
         </div>
       </article>
@@ -137,9 +137,20 @@
             <h3>Questions to ask</h3>
             <ul id="outreach-questions"></ul>
           </section>
+          <section class="contact-section">
+            <div class="section-heading">
+              <div>
+                <h3>People to contact</h3>
+                <p class="contact-help">Public suggestions only. Verify current employment and role relevance before reaching out.</p>
+              </div>
+              <button id="find-contacts" type="button">Find people</button>
+            </div>
+            <div id="contact-status" class="contact-status" role="status"></div>
+            <div id="contact-results" class="contact-results"></div>
+          </section>
         </div>
       </aside>
     </div>
-    <script src="app.js?v=20260823-1"></script>
+    <script src="app.js?v=20260823-2"></script>
   </body>
 </html>

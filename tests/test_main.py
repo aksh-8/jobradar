@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from agent.contact_discovery import ContactSuggestion, ContactType
 from agent.posting_extractor import ClosedJobPostingError, PostingExtractionError
 from backend.main import create_app
 from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
@@ -39,6 +40,25 @@ class StubPostingExtractor:
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
+
+
+class StubContactFinder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def find(self, posting, *, job_url: str, limit: int):
+        self.calls += 1
+        return (
+            ContactSuggestion(
+                name="Jane Recruiter",
+                title=f"Technical Recruiter at {posting.company}",
+                contact_type=ContactType.RECRUITER,
+                profile_url="https://www.linkedin.com/in/jane-recruiter",
+                source="LinkedIn public search result",
+                confidence=94,
+                evidence="Public result; verify current employment before outreach.",
+            ),
+        )
 
 
 def ready_profile() -> ResumeProfile:
@@ -94,6 +114,7 @@ def make_client(
     provider_result: ProviderAssessment | Exception | None = None,
     profiles: tuple[ResumeProfile, ...] | None = None,
     posting_extractor: StubPostingExtractor | None = None,
+    contact_finder: StubContactFinder | None = None,
 ) -> TestClient:
     result = provider_result if provider_result is not None else assessment()
     app = create_app(
@@ -101,6 +122,7 @@ def make_client(
         scoring_engine=ScoringEngine(StubProvider(result)),
         resume_catalog=ResumeCatalog(profiles or (ready_profile(),)),
         posting_extractor=posting_extractor,
+        contact_finder=contact_finder,
     )
     return TestClient(app)
 
@@ -113,7 +135,7 @@ def test_health_initializes_and_checks_database(tmp_path: Path) -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["database"] == "ready"
-    assert body["schema_version"] == 5
+    assert body["schema_version"] == 7
     assert isinstance(body["gemini"]["configured"], bool)
     assert (tmp_path / "api.db").is_file()
 
@@ -309,9 +331,7 @@ def test_scored_job_outreach_matches_digest_guidance(tmp_path: Path) -> None:
     assert "recruiter or hiring manager" in body["recruiter_message"]
 
 
-def test_hard_rejected_job_can_be_deleted_but_qualified_job_cannot(
-    tmp_path: Path,
-) -> None:
+def test_any_user_selected_job_can_be_deleted(tmp_path: Path) -> None:
     rejected_payload = score_payload(with_url=True)
     rejected_payload["posting"]["sponsorship_status"] = "NO"
     rejected_payload["posting"]["description"] = "No visa sponsorship is available."
@@ -326,8 +346,29 @@ def test_hard_rejected_job_can_be_deleted_but_qualified_job_cannot(
         qualified_response = client.delete(f"/api/jobs/{qualified_id}")
 
         assert rejected_response.status_code == 204
-        assert qualified_response.status_code == 409
-        assert [job["id"] for job in client.get("/api/jobs").json()] == [qualified_id]
+        assert qualified_response.status_code == 204
+        assert client.get("/api/jobs").json() == []
+
+
+def test_contact_search_is_cached_and_can_be_refreshed(tmp_path: Path) -> None:
+    finder = StubContactFinder()
+    with make_client(tmp_path, contact_finder=finder) as client:
+        job_id = client.post(
+            "/api/score", json=score_payload(with_url=True)
+        ).json()["job_id"]
+
+        first = client.post(f"/api/jobs/{job_id}/contacts", json={})
+        cached = client.post(f"/api/jobs/{job_id}/contacts", json={})
+        refreshed = client.post(
+            f"/api/jobs/{job_id}/contacts", json={"refresh": True}
+        )
+
+    assert first.status_code == 200
+    assert first.json()["cached"] is False
+    assert first.json()["suggestions"][0]["contact_type"] == "RECRUITER"
+    assert cached.json()["cached"] is True
+    assert refreshed.json()["cached"] is False
+    assert finder.calls == 2
 
 
 def test_skipping_job_requires_reason(tmp_path: Path) -> None:
@@ -355,12 +396,14 @@ def test_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "USE RESUME" in response.text
     assert "APPLICATION PLAYBOOK" in response.text
     assert "Outreach details" in response.text
+    assert "People to contact" in response.text
     assert script.status_code == 200
     assert "loadJobs" in script.text
     assert 'fetch("/api/score-url"' in script.text
     assert "recommended_resume" in script.text
     assert "/outreach`" in script.text
     assert "job.location_tier" in script.text
-    assert "Delete rejected" in response.text
-    assert "deleteRejectedJob" in script.text
+    assert ">Delete</button>" in response.text
+    assert "deleteJob" in script.text
+    assert "findContacts" in script.text
     assert 'classList.toggle("current", isCurrentStatus)' in script.text

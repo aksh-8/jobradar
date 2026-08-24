@@ -262,6 +262,22 @@ silently classify a role as closed.
 Dry-run means no email; discovery and SQLite persistence still occur. Empty
 digests are skipped unless `SEND_EMPTY_DIGEST=true`.
 
+## Public contact discovery
+
+Contact discovery is an explicit dashboard action, not part of scheduled job
+discovery. For one selected role, Brave runs three bounded public searches:
+technical recruiting, engineering management matched to the role family, and
+company leadership/team pages. Public result titles, snippets, and URLs are
+filtered for company evidence, classified, and ranked recruiter, hiring
+manager, then relevant team member. The top results are cached in
+`job_contacts`; `job_contact_searches` also caches an empty result so repeated
+panel opens do not consume search quota.
+
+LinkedIn results are search-engine links only. JobRadar never signs in to,
+opens for extraction, scrapes, or sends messages through LinkedIn. Every result
+is labeled as a lead requiring manual verification because titles and company
+associations in search indexes can be stale.
+
 ## Known limitations and review questions
 
 - Generic custom-career monitoring cannot guarantee coverage on JavaScript-only
@@ -272,6 +288,8 @@ digests are skipped unless `SEND_EMPTY_DIGEST=true`.
   schema and quota changes.
 - LinkedIn/Indeed/ZipRecruiter are discovered through public search results; the
   system does not claim complete or real-time coverage of those platforms.
+- Contact suggestions inherit search-index staleness and can be incomplete or
+  wrong; current employment and relevance must be confirmed manually.
 - Company-size enrichment is not implemented, so that filter activates only
   when a caller supplies a verified size.
 - Known-sponsor membership is an application heuristic, not role-level evidence.

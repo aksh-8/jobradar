@@ -31,7 +31,12 @@ async def test_initialize_database_creates_schema_and_is_idempotent(
         )
         tables = {row["name"] for row in await cursor.fetchall()}
         assert {
-            "schema_migrations", "jobs", "job_events", "discovery_track_runs"
+            "schema_migrations",
+            "jobs",
+            "job_events",
+            "discovery_track_runs",
+            "job_contacts",
+            "job_contact_searches",
         } <= tables
 
         cursor = await connection.execute(
@@ -44,6 +49,8 @@ async def test_initialize_database_creates_schema_and_is_idempotent(
             (3, "add_multisource_discovery_identity"),
             (4, "add_job_availability_tracking"),
             (5, "add_availability_audit_schedule"),
+            (6, "add_public_contact_suggestions"),
+            (7, "add_contact_search_cache_state"),
         ]
 
 

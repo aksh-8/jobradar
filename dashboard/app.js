@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { jobs: [], status: "ALL", search: "" };
+const state = { jobs: [], status: "ALL", search: "", activeOutreachJobId: null };
 const jobsElement = document.getElementById("jobs");
 const notice = document.getElementById("notice");
 const urlScoreForm = document.getElementById("url-score-form");
@@ -57,13 +57,7 @@ function render() {
       ? `${job.location_tier} • ${job.location}`
       : job.location || "US location";
     const scoreDetails = details(job);
-    const deleteButton = card.querySelector(".delete-rejected");
-    const hardRejected = scoreDetails.verdict === "REJECTED"
-      && (scoreDetails.hard_flags || []).length > 0;
-    deleteButton.classList.toggle("hidden", !hardRejected);
-    if (hardRejected) {
-      deleteButton.addEventListener("click", () => deleteRejectedJob(job));
-    }
+    card.querySelector(".delete-job").addEventListener("click", () => deleteJob(job));
     card.querySelector(".resume-note strong").textContent = scoreDetails.recommended_resume
       || scoreDetails.resume_profile_id
       || "Not recorded";
@@ -102,6 +96,7 @@ function renderList(elementId, values, emptyMessage) {
 
 async function openOutreach(job, returnFocus) {
   outreachReturnFocus = returnFocus;
+  state.activeOutreachJobId = job.id;
   document.body.classList.add("panel-open");
   outreachOverlay.classList.remove("hidden");
   outreachOverlay.setAttribute("aria-hidden", "false");
@@ -110,6 +105,13 @@ async function openOutreach(job, returnFocus) {
   document.getElementById("outreach-loading").classList.remove("hidden");
   document.getElementById("outreach-error").classList.add("hidden");
   document.getElementById("outreach-content").classList.add("hidden");
+  document.getElementById("contact-results").replaceChildren();
+  document.getElementById("contact-status").textContent = "";
+  document.getElementById("contact-status").classList.remove("error");
+  const contactButton = document.getElementById("find-contacts");
+  contactButton.disabled = false;
+  contactButton.textContent = "Find people";
+  contactButton.dataset.refresh = "false";
   document.getElementById("close-outreach").focus();
 
   try {
@@ -141,6 +143,78 @@ function closeOutreach() {
   outreachOverlay.setAttribute("aria-hidden", "true");
   outreachReturnFocus?.focus();
   outreachReturnFocus = null;
+  state.activeOutreachJobId = null;
+}
+
+function contactTypeLabel(contactType) {
+  return {
+    RECRUITER: "Recruiter",
+    HIRING_MANAGER: "Hiring manager",
+    TEAM_MEMBER: "Team member",
+  }[contactType] || "Public contact";
+}
+
+function renderContacts(suggestions) {
+  const results = document.getElementById("contact-results");
+  results.replaceChildren(...suggestions.map((suggestion) => {
+    const card = document.createElement("article");
+    card.className = "contact-card";
+
+    const heading = document.createElement("div");
+    heading.className = "contact-card-head";
+    const link = document.createElement("a");
+    link.href = suggestion.profile_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = suggestion.name;
+    const type = document.createElement("span");
+    type.className = "contact-type";
+    type.textContent = contactTypeLabel(suggestion.contact_type);
+    heading.append(link, type);
+
+    const title = document.createElement("p");
+    title.className = "contact-title";
+    title.textContent = suggestion.title;
+    const evidence = document.createElement("p");
+    evidence.className = "contact-evidence";
+    evidence.textContent = `${suggestion.confidence}% confidence - ${suggestion.source}. ${suggestion.evidence}`;
+    card.append(heading, title, evidence);
+    return card;
+  }));
+}
+
+async function findContacts(refresh = false) {
+  const jobId = state.activeOutreachJobId;
+  if (!jobId) return;
+  const button = document.getElementById("find-contacts");
+  const statusElement = document.getElementById("contact-status");
+  button.disabled = true;
+  button.textContent = "Searching...";
+  statusElement.classList.remove("error");
+  statusElement.textContent = "Searching public results for relevant people...";
+  try {
+    const response = await fetch(`/api/jobs/${jobId}/contacts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || "Could not search for contacts.");
+    if (state.activeOutreachJobId !== jobId) return;
+    renderContacts(body.suggestions);
+    statusElement.textContent = body.suggestions.length
+      ? `${body.suggestions.length} public suggestion${body.suggestions.length === 1 ? "" : "s"}${body.cached ? " (cached)" : ""}.`
+      : "No credible public suggestions found. Try a manual LinkedIn company-people search.";
+    button.textContent = "Refresh results";
+    button.dataset.refresh = "true";
+  } catch (error) {
+    if (state.activeOutreachJobId !== jobId) return;
+    statusElement.textContent = error.message;
+    statusElement.classList.add("error");
+    button.textContent = "Try again";
+  } finally {
+    if (state.activeOutreachJobId === jobId) button.disabled = false;
+  }
 }
 
 function showUrlScoreResult(message = "", isError = false) {
@@ -218,20 +292,20 @@ async function changeStatus(jobId, status) {
   }
 }
 
-async function deleteRejectedJob(job) {
+async function deleteJob(job) {
   const confirmed = window.confirm(
-    `Permanently remove the hard-policy rejection “${job.title}” from JobRadar?`,
+    `Permanently remove "${job.title}" at ${job.company} from JobRadar? This cannot be undone.`,
   );
   if (!confirmed) return;
   try {
     const response = await fetch(`/api/jobs/${job.id}`, { method: "DELETE" });
     if (!response.ok) {
       const body = await response.json();
-      throw new Error(body.detail || "Could not delete this rejected job.");
+      throw new Error(body.detail || "Could not delete this job.");
     }
     state.jobs = state.jobs.filter((candidate) => candidate.id !== job.id);
     render();
-    showNotice("Hard-policy rejection deleted.");
+    showNotice("Job deleted.");
   } catch (error) {
     showNotice(error.message);
   }
@@ -239,6 +313,9 @@ async function deleteRejectedJob(job) {
 
 document.getElementById("refresh").addEventListener("click", loadJobs);
 document.getElementById("close-outreach").addEventListener("click", closeOutreach);
+document.getElementById("find-contacts").addEventListener("click", (event) => {
+  findContacts(event.currentTarget.dataset.refresh === "true");
+});
 outreachOverlay.addEventListener("click", (event) => {
   if (event.target === outreachOverlay) closeOutreach();
 });

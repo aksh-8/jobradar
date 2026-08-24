@@ -163,6 +163,45 @@ MIGRATIONS = (
             "CREATE INDEX idx_jobs_availability_check ON jobs(availability_checked_at)",
         ),
     ),
+    Migration(
+        version=6,
+        name="add_public_contact_suggestions",
+        statements=(
+            """
+            CREATE TABLE job_contacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+                professional_title TEXT NOT NULL
+                    CHECK (length(trim(professional_title)) > 0),
+                contact_type TEXT NOT NULL
+                    CHECK (contact_type IN ('RECRUITER', 'HIRING_MANAGER', 'TEAM_MEMBER')),
+                profile_url TEXT NOT NULL CHECK (length(trim(profile_url)) > 0),
+                source TEXT NOT NULL CHECK (length(trim(source)) > 0),
+                confidence INTEGER NOT NULL CHECK (confidence BETWEEN 0 AND 100),
+                evidence TEXT NOT NULL CHECK (length(trim(evidence)) > 0),
+                discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+                UNIQUE (job_id, profile_url)
+            )
+            """,
+            "CREATE INDEX idx_job_contacts_job_rank ON job_contacts(job_id, contact_type, confidence DESC)",
+        ),
+    ),
+    Migration(
+        version=7,
+        name="add_contact_search_cache_state",
+        statements=(
+            """
+            CREATE TABLE job_contact_searches (
+                job_id INTEGER PRIMARY KEY,
+                searched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                result_count INTEGER NOT NULL DEFAULT 0 CHECK (result_count >= 0),
+                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            )
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

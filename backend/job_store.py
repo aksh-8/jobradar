@@ -130,10 +130,6 @@ class ExistingJobMatch:
     matched_by: str
 
 
-class JobDeletionNotAllowedError(ValueError):
-    """Raised when a dashboard deletion does not meet the hard-rejection gate."""
-
-
 def canonical_job_url(url: str) -> str:
     """Remove fragments and common tracking parameters before deduplication."""
 
@@ -823,31 +819,17 @@ async def weekly_missing_skills(
     return tuple(ordered[:limit])
 
 
-async def delete_hard_rejected_job(
+async def delete_stored_job(
     job_id: int,
     *,
     database_path: str | Path | None = None,
 ) -> bool:
-    """Delete only a deterministic hard rejection and its cascaded event history."""
+    """Permanently delete a user-selected job and its cascaded related records."""
 
     async with database_connection(database_path) as connection:
-        cursor = await connection.execute(
-            "SELECT status, score_details FROM jobs WHERE id = ?",
-            (job_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
+        cursor = await connection.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,))
+        if await cursor.fetchone() is None:
             return False
-        score = _scoring_result(row["score_details"]) if row["score_details"] else None
-        allowed = bool(
-            score is not None
-            and score.verdict.value == "REJECTED"
-            and score.hard_flags
-        )
-        if not allowed:
-            raise JobDeletionNotAllowedError(
-                "Only jobs rejected by deterministic hard-filter policy can be deleted."
-            )
         await connection.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
         await connection.commit()
         return True
