@@ -96,7 +96,12 @@ def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
         page_text=soup.get_text(" "),
     ):
         raise ClosedJobPostingError(f"{result.url} is closed: {reason}")
-    title = _text(structured.get("title")) or _first_text(soup, ("h1", "title"))
+    title = (
+        _text(structured.get("title"))
+        or _first_text(soup, ("h1",))
+        or result.title
+        or _first_text(soup, ("title",))
+    )
     organization = structured.get("hiringOrganization")
     company = (
         _text(organization.get("name"))
@@ -114,6 +119,7 @@ def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
                 "[class*='company-info']",
             ),
         )
+    company = company or result.company or ""
     description = _html_text(structured.get("description")) or _first_text(
         soup,
         (
@@ -124,6 +130,7 @@ def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
             "main",
         ),
     )
+    description = description or result.description or ""
     if not title or not company or not description:
         missing = [
             label

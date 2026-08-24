@@ -43,15 +43,16 @@ Edit `.env` and configure:
 
 - `GEMINI_API_KEY` for primary scoring.
 - `JOB_SEARCH_PROVIDER` only for manual `--query` runs; scheduled discovery uses
-  the three tracks below.
+  the discovery tracks below.
 - `RESUME_PROFILE_PATH=./config/resume_profile.json`.
 - `RESUME_PROFILE_ID=auto` for four-variant selection.
 - Email credentials only if digest delivery will be used.
 - `GREENHOUSE_BOARDS`, `LEVER_BOARDS`, `ASHBY_BOARDS`, and
   `CUSTOM_CAREER_PAGES` for Track A priority-company monitoring.
-- `SERPAPI_API_KEY` for Track B Google Jobs discovery.
-- `BRAVE_SEARCH_API_KEY` for Track C LinkedIn/Indeed/ZipRecruiter and custom-site
-  gap discovery.
+- `SERPAPI_API_KEY` for Track B role/location and priority-employer Google Jobs
+  discovery.
+- `BRAVE_SEARCH_API_KEY` for priority-company career-domain search plus Track C
+  LinkedIn/Indeed/ZipRecruiter and custom-site gap discovery.
 - `MAX_SCORING_JOBS_PER_RUN` as the shared model-call safety ceiling (start with
   the default 50 and adjust only after observing provider usage).
 - `PRIORITY_COMPANIES`, `FDE_TARGET_COMPANIES`, and

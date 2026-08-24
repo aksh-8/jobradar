@@ -209,6 +209,29 @@ async def test_us_only_jobs_hide_foreign_roles_and_follow_location_priority(
 
 
 @pytest.mark.asyncio
+async def test_dashboard_sorts_score_within_each_location_tier(tmp_path: Path) -> None:
+    path = tmp_path / "location-scores.db"
+    await save_scored_job(
+        posting().model_copy(update={"title": "Lower LA", "location": "Burbank, CA"}),
+        result(61),
+        source="brave",
+        url="https://example.com/jobs/lower-la",
+        database_path=path,
+    )
+    await save_scored_job(
+        posting().model_copy(update={"title": "Higher LA", "location": "Santa Monica, CA"}),
+        result(91),
+        source="brave",
+        url="https://example.com/jobs/higher-la",
+        database_path=path,
+    )
+
+    jobs = await list_jobs(us_only=True, database_path=path)
+
+    assert [job.title for job in jobs] == ["Higher LA", "Lower LA"]
+
+
+@pytest.mark.asyncio
 async def test_pending_digest_and_details_exclude_foreign_jobs(tmp_path: Path) -> None:
     path = tmp_path / "us-digest.db"
     us_id = await save_scored_job(

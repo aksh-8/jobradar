@@ -7,6 +7,7 @@ retried once through the configured local fallback.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections.abc import Awaitable, Callable
@@ -141,10 +142,17 @@ class GeminiScoringProvider:
         *,
         api_key: str | None = None,
         model: str | None = None,
+        timeout_seconds: float | None = None,
         generate: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model = model or os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+        configured_timeout = os.getenv("REQUEST_TIMEOUT_SECONDS")
+        self.timeout_seconds = timeout_seconds or (
+            float(configured_timeout)
+            if configured_timeout
+            else DEFAULT_REQUEST_TIMEOUT_SECONDS
+        )
         self._generate = generate
 
     async def score(
@@ -152,15 +160,22 @@ class GeminiScoringProvider:
     ) -> ProviderAssessment:
         prompt = _build_prompt(posting, resume)
         try:
-            raw = (
-                await self._generate(prompt)
-                if self._generate is not None
-                else await self._generate_with_sdk(prompt)
-            )
+            async with asyncio.timeout(self.timeout_seconds):
+                raw = (
+                    await self._generate(prompt)
+                    if self._generate is not None
+                    else await self._generate_with_sdk(prompt)
+                )
             return _parse_assessment(raw)
         except ScoringProviderError:
             raise
-        except (ValidationError, ValueError, TypeError, RuntimeError) as error:
+        except (
+            TimeoutError,
+            ValidationError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+        ) as error:
             raise ScoringProviderError(f"Gemini scoring failed: {error}") from error
 
     async def _generate_with_sdk(self, prompt: str) -> str:

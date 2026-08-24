@@ -25,7 +25,7 @@ from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
 from backend.scoring_engine import ScoringResult
 
 TRACKING_QUERY_PREFIXES = ("utm_",)
-TRACKING_QUERY_NAMES = {"fbclid", "gclid", "trk", "trackingid"}
+TRACKING_QUERY_NAMES = {"fbclid", "gclid", "trk", "trackingid", "visit"}
 AUTOMATIC_DISCOVERY_SOURCES = {
     "brave",
     "serpapi",
@@ -606,9 +606,9 @@ async def list_jobs(
         ]
         rows.sort(
             key=lambda row: (
-                *us_location_sort_key(
+                us_location_sort_key(
                     row["location"], row["workplace_type"], row["description"]
-                ),
+                )[0],
                 -(row["overall_score"] if row["overall_score"] is not None else -1),
                 -row["id"],
             )

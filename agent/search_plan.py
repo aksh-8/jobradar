@@ -11,6 +11,8 @@ from agent.search_providers import (
     CompanyCareerPageProvider,
     GreenhouseBoardProvider,
     LeverBoardProvider,
+    PriorityCompanySearchProvider,
+    PriorityGoogleJobsProvider,
     SearchProvider,
     SerpApiGoogleJobsProvider,
 )
@@ -25,14 +27,19 @@ ROLE_FAMILIES = (
 
 LOCATION_TIERS = (
     "Los Angeles, California",
-    "Greater Los Angeles, California",
     "Remote, United States",
-    "California",
-    "East Coast, United States",
     "United States",
 )
 
-DEFAULT_PRIORITY_COMPANIES = ("Apple", "Google", "Microsoft", "Amazon", "Meta")
+DEFAULT_PRIORITY_COMPANIES = (
+    "Apple",
+    "Google",
+    "Microsoft",
+    "Amazon",
+    "Meta",
+    "NVIDIA",
+    "Tesla",
+)
 DEFAULT_FDE_COMPANIES = ("Glean", "Cohere", "Scale AI")
 GAP_SOURCE_CLAUSE = (
     "(site:linkedin.com/jobs/view OR site:indeed.com/viewjob OR "
@@ -64,23 +71,15 @@ def google_jobs_queries() -> tuple[str, ...]:
 
 def brave_gap_queries(
     *,
-    priority_companies: tuple[str, ...] | None = None,
     fde_companies: tuple[str, ...] | None = None,
 ) -> tuple[str, ...]:
-    """Build source and company searches, explicitly including LinkedIn."""
+    """Build source-gap searches, explicitly including LinkedIn."""
 
-    priority = priority_companies or configured_values(
-        "PRIORITY_COMPANIES", DEFAULT_PRIORITY_COMPANIES
-    )
     fde = fde_companies or configured_values(
         "FDE_TARGET_COMPANIES", DEFAULT_FDE_COMPANIES
     )
-    company_clause = " OR ".join(f'"{company}"' for company in priority)
     fde_clause = " OR ".join(f'"{company}"' for company in fde)
     queries = [f"{role} {GAP_SOURCE_CLAUSE}" for role in ROLE_FAMILIES]
-    queries.extend(
-        f"{role} ({company_clause}) careers" for role in ROLE_FAMILIES[:-1]
-    )
     queries.append(f'{ROLE_FAMILIES[-1]} ({fde_clause}) careers')
     return tuple(queries)
 
@@ -93,6 +92,17 @@ def configured_discovery_tracks(*, result_limit: int = 60) -> tuple[DiscoveryTra
     lever = configured_mapping("LEVER_BOARDS")
     ashby = configured_mapping("ASHBY_BOARDS")
     career_pages = configured_mapping("CUSTOM_CAREER_PAGES", reverse=True)
+    priority_names = {
+        company.casefold()
+        for company in configured_values(
+            "PRIORITY_COMPANIES", DEFAULT_PRIORITY_COMPANIES
+        )
+    }
+    priority_pages = {
+        url: company
+        for url, company in career_pages.items()
+        if company.casefold() in priority_names
+    }
 
     if greenhouse:
         tracks.append(
@@ -124,7 +134,35 @@ def configured_discovery_tracks(*, result_limit: int = 60) -> tuple[DiscoveryTra
             )
         )
 
+    if priority_pages and _real_key(os.getenv("BRAVE_SEARCH_API_KEY")):
+        tracks.append(
+            DiscoveryTrack(
+                "priority_company_search",
+                4,
+                PriorityCompanySearchProvider(priority_pages),
+                tuple(priority_pages),
+                max(result_limit, 10 * len(priority_pages)),
+            )
+        )
+
     if _real_key(os.getenv("SERPAPI_API_KEY")):
+        priority_companies = tuple(
+            company
+            for company in configured_values(
+                "PRIORITY_COMPANIES", DEFAULT_PRIORITY_COMPANIES
+            )
+            if company.casefold() in priority_names
+        )
+        if priority_companies:
+            tracks.append(
+                DiscoveryTrack(
+                    "priority_google_jobs",
+                    4,
+                    PriorityGoogleJobsProvider(priority_companies),
+                    priority_companies,
+                    max(result_limit, 5 * len(priority_companies)),
+                )
+            )
         tracks.append(
             DiscoveryTrack(
                 "google_jobs", 4, SerpApiGoogleJobsProvider(),

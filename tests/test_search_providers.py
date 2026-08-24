@@ -9,6 +9,9 @@ from agent.search_providers import (
     AshbyBoardProvider,
     BraveSearchProvider,
     GreenhouseBoardProvider,
+    PriorityCompanySearchProvider,
+    PriorityGoogleJobsProvider,
+    SearchResult,
     SearchProviderError,
     SerpApiGoogleJobsProvider,
     SerpApiSearchProvider,
@@ -124,8 +127,10 @@ async def test_google_jobs_paginates_and_prefers_canonical_apply_url() -> None:
                         "title": "Platform Engineer",
                         "company_name": "Acme",
                         "location": "Los Angeles, CA",
+                        "description": "Build a reliable cloud platform in Python.",
                         "job_id": "google-1",
                         "apply_options": [
+                            {"title": "Acme", "link": "https://careers.acme.test/jobs/1"},
                             {"title": "LinkedIn", "link": "https://linkedin.com/jobs/view/1"},
                             {"title": "Company", "link": "https://jobs.lever.co/acme/1"},
                         ],
@@ -151,9 +156,90 @@ async def test_google_jobs_paginates_and_prefers_canonical_apply_url() -> None:
     results = await provider.search("platform jobs", limit=2)
 
     assert calls == 2
-    assert results[0].url == "https://jobs.lever.co/acme/1"
+    assert results[0].url == "https://careers.acme.test/jobs/1"
     assert results[0].source_job_id == "google-1"
+    assert results[0].description == "Build a reliable cloud platform in Python."
+    assert results[0].canonical_content is True
     assert results[1].location == "Remote, United States"
+
+
+@pytest.mark.asyncio
+async def test_priority_company_search_scopes_query_and_attaches_company() -> None:
+    class StubPublicSearch:
+        name = "stub"
+
+        def __init__(self) -> None:
+            self.query = ""
+
+        async def search(self, query: str, *, limit: int):
+            self.query = query
+            assert limit == 5
+            return (
+                SearchResult(
+                    title="Senior Platform Engineer",
+                    url="https://jobs.apple.com/en-us/details/42/platform-engineer",
+                ),
+                SearchResult(
+                    title="Retail Store Leader",
+                    url="https://jobs.apple.com/en-us/details/43/store-leader",
+                ),
+            )
+
+    search = StubPublicSearch()
+    page = "https://jobs.apple.com/en-us/search"
+    provider = PriorityCompanySearchProvider(
+        {page: "Apple"}, search_provider=search
+    )
+
+    results = await provider.search(page, limit=5)
+
+    assert "site:jobs.apple.com" in search.query
+    assert " jobs" in search.query
+    assert "United States" not in search.query
+    assert len(results) == 1
+    assert results[0].company == "Apple"
+    assert results[0].source == "Apple careers search"
+
+
+@pytest.mark.asyncio
+async def test_priority_google_jobs_filters_to_requested_company() -> None:
+    class StubGoogleJobs:
+        name = "stub_google_jobs"
+
+        def __init__(self) -> None:
+            self.query = ""
+
+        async def search(self, query: str, *, limit: int):
+            self.query = query
+            assert limit == 5
+            return (
+                SearchResult(
+                    title="Software Engineer",
+                    url="https://amazon.jobs/1",
+                    company="Amazon.com Services LLC",
+                    description="Build software platforms.",
+                    canonical_content=True,
+                ),
+                SearchResult(
+                    title="Software Engineer",
+                    url="https://example.com/2",
+                    company="Another Company",
+                    description="Build other platforms.",
+                    canonical_content=True,
+                ),
+            )
+
+    search = StubGoogleJobs()
+    provider = PriorityGoogleJobsProvider(
+        ("Amazon",), search_provider=search
+    )
+
+    results = await provider.search("Amazon", limit=5)
+
+    assert "Amazon" in search.query
+    assert "United States" in search.query
+    assert len(results) == 1
+    assert results[0].company == "Amazon.com Services LLC"
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 """Tests for provider-independent scoring and fallback behavior."""
 
+import asyncio
 import json
 
 import httpx
@@ -287,6 +288,19 @@ async def test_gemini_adapter_rejects_invalid_output() -> None:
         await GeminiScoringProvider(generate=generate).score(
             make_posting(), make_resume()
         )
+
+
+@pytest.mark.asyncio
+async def test_gemini_adapter_enforces_request_timeout() -> None:
+    async def generate(prompt: str) -> str:
+        await asyncio.sleep(0.05)
+        return make_assessment().model_dump_json()
+
+    with pytest.raises(ScoringProviderError, match="Gemini scoring failed"):
+        await GeminiScoringProvider(
+            generate=generate,
+            timeout_seconds=0.01,
+        ).score(make_posting(), make_resume())
 
 
 @pytest.mark.asyncio

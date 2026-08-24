@@ -40,6 +40,9 @@ Open `http://127.0.0.1:8000/dashboard/` while Uvicorn is running.
   does not log in to, scrape, or message through LinkedIn.
 - **New**, **Viewed**, **Applied**, and **Skipped** filter lifecycle states.
 - Search matches title and company.
+- The header shows **Discovery healthy**, **Discovery failed**, or **Discovery
+  unknown** from the latest Task Scheduler runner status. A failure does not
+  mean the dashboard API itself is offline.
 - **Mark viewed** and **Applied** persist an event in SQLite.
 - **Skip** requires a reason.
 - Every role has **Delete** for manual cleanup of irrelevant results. The
@@ -81,7 +84,11 @@ prints the digest.
 Without `--query`, the runner uses the scheduled multi-source plan:
 
 - Track A every 2 hours: configured Greenhouse, Lever, Ashby, and custom careers.
-- Track B every 4 hours: SerpAPI `google_jobs` role/location matrix.
+- Priority-company search every 4 hours: one bounded Brave query for each
+  configured career domain (Apple, Google, Microsoft, Amazon, Meta, NVIDIA,
+  and Tesla by default).
+- Track B every 4 hours: SerpAPI `google_jobs` role/location matrix plus one
+  structured query per configured priority employer.
 - Track C every 12 hours: Brave gaps including LinkedIn, Indeed, ZipRecruiter,
   Workday, SmartRecruiters, and priority companies.
 
@@ -97,6 +104,11 @@ changed. Dry-run prevents email but still persists discovery and track state.
 The result budget is shared fairly across every query. Model-scored work is
 separately capped by `MAX_SCORING_JOBS_PER_RUN` (default 50); excess eligible
 postings are printed as `deferred` and remain available for a later run.
+
+Google Jobs descriptions are treated as structured discovery content when
+present. JobRadar prefers employer-labeled or known ATS application links and
+does not require a second fetch from blocked aggregators such as Indeed or
+ZipRecruiter before applying policy and scoring.
 
 Each scheduled invocation also rechecks up to `AVAILABILITY_CHECK_LIMIT`
 score-prioritized saved roles when their last check is older than
@@ -143,6 +155,21 @@ The first command must complete as a dry run. The second must deliver a real tes
 At a two-hour cadence, JobRadar can send at most 12 non-empty digests per day. The recommended starting window is daytime only if API usage or inbox volume becomes noisy. Do not enable **Run whether user is logged on or not** until the task has succeeded repeatedly and you understand how Windows stores the account credential.
 
 Review Task Scheduler history, search-provider quota, scoring-provider quota, and the digest recipient after the first scheduled day.
+
+To check priority-company coverage without consuming scoring quota or sending
+email, run:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.check_priority_sources
+```
+
+This performs one bounded public search per configured priority career domain
+and prints only result counts and titles. Zero is a coverage signal, not proof
+that the company has no open roles.
+
+Add `--google-jobs` to inspect the structured priority-employer path. That mode
+consumes one SerpAPI request per configured priority company, so use it for
+diagnosis rather than routine polling.
 
 Each runner invocation appends output to `logs/jobradar-YYYY-MM-DD.log` and
 rewrites both `logs/last_run_status.txt` and `logs/errors_in_last_run.txt`.

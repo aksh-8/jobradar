@@ -115,6 +115,7 @@ def make_client(
     profiles: tuple[ResumeProfile, ...] | None = None,
     posting_extractor: StubPostingExtractor | None = None,
     contact_finder: StubContactFinder | None = None,
+    runtime_log_directory: Path | None = None,
 ) -> TestClient:
     result = provider_result if provider_result is not None else assessment()
     app = create_app(
@@ -123,6 +124,7 @@ def make_client(
         resume_catalog=ResumeCatalog(profiles or (ready_profile(),)),
         posting_extractor=posting_extractor,
         contact_finder=contact_finder,
+        runtime_log_directory=runtime_log_directory,
     )
     return TestClient(app)
 
@@ -138,6 +140,25 @@ def test_health_initializes_and_checks_database(tmp_path: Path) -> None:
     assert body["schema_version"] == 7
     assert isinstance(body["gemini"]["configured"], bool)
     assert (tmp_path / "api.db").is_file()
+
+
+def test_discovery_health_reports_latest_runner_failure(tmp_path: Path) -> None:
+    log_directory = tmp_path / "logs"
+    log_directory.mkdir()
+    (log_directory / "last_run_status.txt").write_text(
+        "[2026-08-23T15:59:09-07:00] Exit code: 1\n",
+        encoding="utf-8",
+    )
+    with make_client(tmp_path, runtime_log_directory=log_directory) as client:
+        response = client.get("/api/discovery/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "failed",
+        "last_run_at": "2026-08-23T15:59:09-07:00",
+        "exit_code": 1,
+        "message": "Scheduled discovery failed. Check logs/errors_in_last_run.txt.",
+    }
 
 
 def test_score_returns_structured_result(tmp_path: Path) -> None:
@@ -336,11 +357,11 @@ def test_any_user_selected_job_can_be_deleted(tmp_path: Path) -> None:
     rejected_payload["posting"]["sponsorship_status"] = "NO"
     rejected_payload["posting"]["description"] = "No visa sponsorship is available."
     rejected_payload["url"] = "https://example.com/jobs/rejected"
+    qualified_payload = score_payload(with_url=True)
+    qualified_payload["posting"]["title"] = "Qualified Backend Engineer"
     with make_client(tmp_path) as client:
         rejected_id = client.post("/api/score", json=rejected_payload).json()["job_id"]
-        qualified_id = client.post(
-            "/api/score", json=score_payload(with_url=True)
-        ).json()["job_id"]
+        qualified_id = client.post("/api/score", json=qualified_payload).json()["job_id"]
 
         rejected_response = client.delete(f"/api/jobs/{rejected_id}")
         qualified_response = client.delete(f"/api/jobs/{qualified_id}")
@@ -397,6 +418,7 @@ def test_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "APPLICATION PLAYBOOK" in response.text
     assert "Outreach details" in response.text
     assert "People to contact" in response.text
+    assert "Checking discovery" in response.text
     assert script.status_code == 200
     assert "loadJobs" in script.text
     assert 'fetch("/api/score-url"' in script.text
@@ -406,4 +428,5 @@ def test_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert ">Delete</button>" in response.text
     assert "deleteJob" in script.text
     assert "findContacts" in script.text
+    assert 'fetch("/api/discovery/status")' in script.text
     assert 'classList.toggle("current", isCurrentStatus)' in script.text

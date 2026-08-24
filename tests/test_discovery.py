@@ -146,6 +146,69 @@ async def test_shared_scoring_budget_defers_only_model_scored_postings(
 
 
 @pytest.mark.asyncio
+async def test_scoring_budget_is_shared_round_robin_across_queries(
+    tmp_path: Path,
+) -> None:
+    class QuerySearch:
+        name = "query-search"
+
+        async def search(self, query: str, *, limit: int):
+            return tuple(
+                SearchResult(
+                    title=f"{query}-{index}",
+                    url=f"https://example.com/{query}/{index}",
+                    company=query,
+                )
+                for index in range(limit)
+            )
+
+    class QueryExtractor:
+        async def fetch(self, result: SearchResult) -> JobPostingFacts:
+            return JobPostingFacts(
+                title=result.title,
+                company=result.company or "Unknown",
+                description="Build Python APIs. Visa sponsorship is available.",
+                location="United States",
+                sponsorship_status=SponsorshipStatus.YES,
+                company_size=500,
+                base_salary_max_usd=180_000,
+            )
+
+    class AlwaysStrongProvider(StubAssessmentProvider):
+        async def score(self, posting, resume) -> ProviderAssessment:
+            self.calls += 1
+            return ProviderAssessment(
+                dimensions=ScoreDimensions(
+                    skills_match=90,
+                    experience_level=90,
+                    domain_relevance=90,
+                    role_type=90,
+                    compensation_signal=90,
+                ),
+                rationale=("Strong match.",),
+            )
+
+    provider = AlwaysStrongProvider()
+    agent = DiscoveryAgent(
+        search_provider=QuerySearch(),
+        extractor=QueryExtractor(),
+        scoring_engine=ScoringEngine(provider),
+        resume=ready_resume(),
+        scoring_budget=ScoringBudget(2),
+        database_path=tmp_path / "fair-budget.db",
+    )
+
+    report = await agent.run(("Apple", "Microsoft", "Tesla"), limit=6)
+
+    assert provider.calls == 2
+    assert {item.posting.company for item in report.opportunities} == {
+        "Apple",
+        "Microsoft",
+    }
+    assert report.deferred_results == 4
+
+
+@pytest.mark.asyncio
 async def test_discovery_rejects_non_us_postings_before_scoring(tmp_path: Path) -> None:
     class ForeignExtractor(StubExtractor):
         async def fetch(self, result: SearchResult) -> JobPostingFacts:

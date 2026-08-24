@@ -7,7 +7,8 @@ button, input { font: inherit; }
 .brand { align-items: center; color: inherit; display: flex; font-weight: 800; gap: 10px; text-decoration: none; }
 .brand-mark { align-items: center; background: #173f2c; border-radius: 8px; color: #fff; display: inline-flex; font-size: 12px; height: 30px; justify-content: center; letter-spacing: .05em; width: 30px; }
 .health { align-items: center; color: #667068; display: flex; font-size: 12px; gap: 7px; }
-#health-dot { background: #c89431; border-radius: 50%; height: 8px; width: 8px; }
+.runtime-health { align-items: center; display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: flex-end; }
+#health-dot, #discovery-dot { background: #c89431; border-radius: 50%; height: 8px; width: 8px; }
 main { margin: auto; max-width: 1280px; padding: 64px clamp(20px, 5vw, 72px); }
 .hero { align-items: end; display: flex; justify-content: space-between; margin-bottom: 48px; }
 .eyebrow { color: #287552; font-size: 11px; font-weight: 800; letter-spacing: .18em; }

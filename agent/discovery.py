@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import os
 from dataclasses import dataclass
+from itertools import zip_longest
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,7 +21,7 @@ from agent.posting_extractor import (
     PostingExtractor,
 )
 from agent.search_plan import DiscoveryTrack, configured_discovery_tracks
-from agent.search_providers import SearchProvider, create_search_provider
+from agent.search_providers import SearchProvider, SearchResult, create_search_provider
 from backend.job_store import (
     JobStatus,
     discovery_track_is_due,
@@ -155,6 +156,7 @@ class DiscoveryAgent:
         errors: list[str] = []
         seen_urls: set[str] = set()
         query_budgets = _query_result_budgets(len(queries), limit)
+        result_groups: list[tuple[SearchResult, ...]] = []
 
         for query, query_limit in zip(queries, query_budgets, strict=True):
             if query_limit == 0:
@@ -166,7 +168,14 @@ class DiscoveryAgent:
             except Exception as error:
                 errors.append(f"Search query {query!r} failed: {error}")
                 continue
-            for search_result in results:
+            result_groups.append(results)
+
+        # Interleave queries so a shared scoring ceiling cannot let the first
+        # role family, location, or priority company starve every later query.
+        for result_round in zip_longest(*result_groups):
+            for search_result in result_round:
+                if search_result is None:
+                    continue
                 if searched >= limit:
                     break
                 searched += 1
@@ -272,6 +281,8 @@ class DiscoveryAgent:
                         outreach=build_outreach(posting, score),
                     )
                 )
+            if searched >= limit:
+                break
 
         opportunities.sort(
             key=lambda item: (
@@ -403,7 +414,7 @@ async def run_scheduled_discovery(
     email_sender: EmailSender | None = None,
     tracks: tuple[DiscoveryTrack, ...] | None = None,
 ) -> tuple[DiscoveryReport, Digest]:
-    """Run each due Track A/B/C source and then compile one combined digest."""
+    """Run each due discovery source and then compile one combined digest."""
 
     catalog = configured_resume_catalog()
     extractor = PostingExtractor()

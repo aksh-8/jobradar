@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from ipaddress import ip_address
@@ -154,6 +155,15 @@ class ContactSuggestionsResponse(ApiModel):
     suggestions: tuple[ContactSuggestion, ...]
 
 
+class DiscoveryHealthResponse(ApiModel):
+    """Non-secret state from the most recent scheduled discovery invocation."""
+
+    status: str
+    last_run_at: str | None = None
+    exit_code: int | None = None
+    message: str
+
+
 def _configured_secret(name: str) -> bool:
     value = os.getenv(name, "").strip()
     return bool(value and not value.startswith("replace_with_"))
@@ -189,6 +199,39 @@ def _validate_public_job_url(url: HttpUrl) -> str:
     return str(url)
 
 
+def _discovery_health(log_directory: Path) -> DiscoveryHealthResponse:
+    status_path = log_directory / "last_run_status.txt"
+    if not status_path.is_file():
+        return DiscoveryHealthResponse(
+            status="unknown",
+            message="No scheduled discovery run has been recorded yet.",
+        )
+    rendered = status_path.read_text(encoding="utf-8").strip()
+    match = re.search(r"^\[([^]]+)]\s+Exit code:\s+(-?\d+)", rendered)
+    if match:
+        exit_code = int(match.group(2))
+        return DiscoveryHealthResponse(
+            status="ok" if exit_code == 0 else "failed",
+            last_run_at=match.group(1),
+            exit_code=exit_code,
+            message=(
+                "Scheduled discovery completed successfully."
+                if exit_code == 0
+                else "Scheduled discovery failed. Check logs/errors_in_last_run.txt."
+            ),
+        )
+    failure = re.search(r"^\[([^]]+)]\s+Runner failure:", rendered)
+    return DiscoveryHealthResponse(
+        status="failed" if failure else "unknown",
+        last_run_at=failure.group(1) if failure else None,
+        message=(
+            "The discovery runner failed before it could start."
+            if failure
+            else "The latest discovery status could not be parsed."
+        ),
+    )
+
+
 def create_app(
     *,
     database_path: str | Path | None = None,
@@ -196,6 +239,7 @@ def create_app(
     resume_catalog: ResumeCatalog | None = None,
     posting_extractor: PostingExtractor | None = None,
     contact_finder: PublicContactFinder | None = None,
+    runtime_log_directory: str | Path | None = None,
 ) -> FastAPI:
     """Build an application with replaceable dependencies for isolated tests."""
 
@@ -214,6 +258,10 @@ def create_app(
     application.state.resume_catalog = resume_catalog or configured_resume_catalog()
     application.state.posting_extractor = posting_extractor or PostingExtractor()
     application.state.contact_finder = contact_finder or PublicContactFinder()
+    application.state.runtime_log_directory = Path(
+        runtime_log_directory
+        or Path(__file__).resolve().parent.parent / "logs"
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -264,6 +312,10 @@ def _build_routes():
                 model=os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
             ),
         )
+
+    @router.get("/api/discovery/status", response_model=DiscoveryHealthResponse)
+    async def discovery_status(request: Request) -> DiscoveryHealthResponse:
+        return _discovery_health(request.app.state.runtime_log_directory)
 
     @router.get("/api/jobs", response_model=list[StoredJob])
     async def jobs(

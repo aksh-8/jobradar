@@ -255,14 +255,27 @@ async function scoreJobUrl(event) {
 async function loadJobs() {
   showNotice("");
   try {
-    const [healthResponse, jobsResponse] = await Promise.all([
+    const [healthResponse, jobsResponse, discoveryResponse] = await Promise.all([
       fetch("/health"),
       fetch("/api/jobs?us_only=true"),
+      fetch("/api/discovery/status"),
     ]);
     if (!healthResponse.ok || !jobsResponse.ok) throw new Error("The JobRadar API is unavailable.");
     state.jobs = await jobsResponse.json();
     document.getElementById("health-dot").style.background = "#2b9861";
     document.getElementById("health-text").textContent = "API ready";
+    if (discoveryResponse.ok) {
+      const discovery = await discoveryResponse.json();
+      const discoveryDot = document.getElementById("discovery-dot");
+      const discoveryText = document.getElementById("discovery-text");
+      discoveryDot.style.background = discovery.status === "ok"
+        ? "#2b9861"
+        : discovery.status === "failed" ? "#b84b45" : "#c89431";
+      discoveryText.textContent = discovery.status === "ok"
+        ? "Discovery healthy"
+        : discovery.status === "failed" ? "Discovery failed" : "Discovery unknown";
+      if (discovery.status === "failed") showNotice(discovery.message);
+    }
     render();
   } catch (error) {
     document.getElementById("health-dot").style.background = "#b84b45";

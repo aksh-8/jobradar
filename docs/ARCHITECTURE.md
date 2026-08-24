@@ -57,7 +57,8 @@ remain running.
 
 Public Greenhouse, Lever, and Ashby adapters enumerate configured boards without
 waiting for search-engine indexing. A generic public career-page adapter covers
-custom systems such as Apple, Google, Microsoft, Amazon, and Meta. The generic
+custom systems such as Apple, Google, Microsoft, Amazon, Meta, NVIDIA, and
+Tesla. The generic
 adapter follows job-like links; JavaScript-only career sites may still need a
 dedicated adapter.
 
@@ -83,9 +84,13 @@ SerpAPI is called with `engine=google_jobs`. The adapter follows
 application URL from `apply_options`. Company/ATS URLs outrank arbitrary sites,
 which outrank LinkedIn/Indeed/ZipRecruiter aggregator URLs.
 
-Five role families are crossed with six location queries. Sponsorship language
-is deliberately absent from discovery queries; it is evaluated from the actual
-posting instead.
+Five role families are crossed with three non-overlapping location queries.
+Seven additional company-specific searches isolate the configured priority
+employers and retain Google Jobs' structured descriptions when their own career
+pages require JavaScript or block direct extraction. A normal four-hour cycle
+therefore uses 22 base SerpAPI requests rather than the previous 30-query broad
+matrix. Sponsorship language is deliberately absent from discovery queries; it
+is evaluated from the actual posting instead.
 
 Role families:
 
@@ -98,21 +103,45 @@ Role families:
 Location tiers:
 
 - Los Angeles, California
-- Greater Los Angeles, California
 - Remote, United States
-- California
-- East Coast, United States
 - United States
+
+California, East Coast, and other domestic roles are recovered by the broad
+United States run and ordered later by the shared dashboard/digest location
+policy.
 
 ### Track C: Brave gaps, every twelve hours
 
 Brave runs source-specific searches across LinkedIn, Indeed, ZipRecruiter,
-Workday, SmartRecruiters, priority big-tech companies, and configured FDE
-companies. LinkedIn is intentionally included here rather than accessed through
-an authenticated scraper or nonexistent unrestricted job-seeker API.
+Workday, SmartRecruiters, and configured FDE companies. LinkedIn is
+intentionally included here rather than accessed through an authenticated
+scraper or nonexistent unrestricted job-seeker API.
 
 Brave is a recall/backstop source. It is not treated as the authoritative job
 record, and every result must still produce a readable job-description page.
+
+### Priority-company public search, every four hours
+
+Each configured priority company receives its own bounded Brave query scoped to
+the company's career domain. This prevents a combined `Apple OR Google OR ...`
+query from allowing one employer to consume every result. The default priority
+set is Apple, Google, Microsoft, Amazon, Meta, NVIDIA, and Tesla. Known company
+identity is attached to each result before extraction, which recovers postings
+whose rendered page omits structured `hiringOrganization` metadata.
+The query deliberately does not require a location term because several career
+sites keep location outside their indexed title and snippet. The extractor and
+USA-only policy remain the authoritative location gate.
+
+The parallel `priority_google_jobs` track performs one structured Google Jobs
+query per priority employer. It filters returned company names before scoring,
+so similarly worded roles from unrelated employers cannot enter through a
+company-specific query. This is the primary structured fallback for
+JavaScript-only career pages; Brave remains the independent recall check.
+
+When SerpAPI Google Jobs supplies a full description, that payload is treated
+as canonical discovery content. Employer-labeled and known ATS application URLs
+outrank aggregator URLs, avoiding unnecessary fetches from sites that commonly
+return 401/403 responses.
 
 ## Durable track scheduling
 
@@ -205,7 +234,10 @@ posting is not assigned an invented score.
 
 Both providers run with temperature zero. Gemini uses Google's supported
 `google-genai` SDK and defaults to `gemini-3.6-flash` to control per-posting
-latency and quota use; `GEMINI_MODEL` remains configurable. When neither salary
+latency and quota use; `GEMINI_MODEL` remains configurable. Gemini SDK requests
+and Ollama HTTP requests are both bounded by `REQUEST_TIMEOUT_SECONDS`, so a
+stalled model call falls back or fails the posting instead of blocking the
+entire scheduled run. When neither salary
 boundary is known, application code replaces the model's `compensation_signal` with a
 neutral score of 50. This intentionally contributes five neutral points rather
 than allowing a model to infer compensation from missing data. Known salary
@@ -215,6 +247,9 @@ Scheduled discovery shares `MAX_SCORING_JOBS_PER_RUN` across every due track
 (default 50). Hard rejections are evaluated before this budget and do not
 consume it. Eligible postings beyond the ceiling are reported as deferred and
 left unpersisted so a later run can score them; no placeholder score is stored.
+Results are processed round-robin across a track's queries, preventing the
+first role family, location, or priority employer from consuming the entire
+scoring budget.
 
 Verdicts:
 

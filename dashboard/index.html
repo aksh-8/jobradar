@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review JobRadar scores and manage applications.">
     <title>JobRadar Dashboard</title>
-    <link rel="stylesheet" href="app.css?v=20260823-2">
+    <link rel="stylesheet" href="app.css?v=20260823-3">
   </head>
   <body>
     <header class="site-header">
@@ -13,7 +13,10 @@
         <span class="brand-mark">JR</span>
         <span>JobRadar</span>
       </a>
-      <div class="health"><span id="health-dot"></span><span id="health-text">Checking API</span></div>
+      <div class="runtime-health" aria-label="Runtime status">
+        <div class="health"><span id="health-dot"></span><span id="health-text">Checking API</span></div>
+        <div class="health"><span id="discovery-dot"></span><span id="discovery-text">Checking discovery</span></div>
+      </div>
     </header>
 
     <main>
@@ -151,6 +154,6 @@
         </div>
       </aside>
     </div>
-    <script src="app.js?v=20260823-2"></script>
+    <script src="app.js?v=20260823-3"></script>
   </body>
 </html>

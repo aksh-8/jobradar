@@ -15,7 +15,7 @@ Step 11 is complete. The private catalog contains four READY resume variants, pr
 | Backend API | Validate requests, scan hard filters, score roles, and persist events | Python 3.12, FastAPI, Uvicorn |
 | Scoring providers | Produce structured scoring with a local fallback | Gemini 3.6 Flash, Ollama Qwen 2.5 7B |
 | Persistence | Store discovered, viewed, skipped, and applied roles | SQLite, aiosqlite |
-| Discovery agent | Monitor ATS/company boards, Google Jobs, and public search gaps | Python, public ATS APIs, SerpAPI, Brave Search |
+| Discovery agent | Monitor ATS/company boards, priority-company career domains, Google Jobs, and public search gaps | Python, public ATS APIs, SerpAPI, Brave Search |
 | Digest delivery | Compose outreach guidance and send scheduled results | Gmail SMTP or SendGrid |
 
 I am using one shared Python scoring engine for the extension and discovery agent instead of duplicating scoring logic because both clients must apply identical sponsorship, compensation, and quality rules.
@@ -47,7 +47,7 @@ if (-not (Test-Path config\resume_profile.json)) {
 uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Open `http://127.0.0.1:8000/dashboard/`. Paste a public US job-posting URL into **Quick score**, or use the browser extension on the active page when a site blocks server-side extraction. The dashboard excludes closed and expired roles and shows verified-US roles only, ordered Los Angeles, US remote, California, East Coast, then the rest of the United States. Every saved role displays the recommended resume, and **Outreach details** opens the same strategy, recruiter message, referral request, cold email, and missing-skills guidance used by the digest. Its on-demand **Find people** action uses Brave public results to rank recruiter, hiring-manager, and relevant-team leads for manual verification; it does not open or scrape authenticated LinkedIn profiles. Every card also has a confirmed, permanent **Delete** action for irrelevant roles. The server terminal must remain running. Real scoring uses the READY private catalog and `RESUME_PROFILE_ID=auto` to select among General, Platform, AIAutomation, and FDE.
+Open `http://127.0.0.1:8000/dashboard/`. Paste a public US job-posting URL into **Quick score**, or use the browser extension on the active page when a site blocks server-side extraction. The dashboard excludes closed and expired roles and shows verified-US roles only, ordered Los Angeles, US remote, California, East Coast, then the rest of the United States; score descending is used within each tier. The header reports both API and scheduled-discovery health. Every saved role displays the recommended resume, and **Outreach details** opens the same strategy, recruiter message, referral request, cold email, and missing-skills guidance used by the digest. Its on-demand **Find people** action uses Brave public results to rank recruiter, hiring-manager, and relevant-team leads for manual verification; it does not open or scrape authenticated LinkedIn profiles. Every card also has a confirmed, permanent **Delete** action for irrelevant roles. The server terminal must remain running. Real scoring uses the READY private catalog and `RESUME_PROFILE_ID=auto` to select among General, Platform, AIAutomation, and FDE.
 
 ## Common commands
 

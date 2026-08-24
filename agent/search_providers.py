@@ -15,7 +15,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.location_policy import is_us_based
 
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 30.0
-AGGREGATOR_HOSTS = ("linkedin.com", "indeed.com", "ziprecruiter.com", "google.com")
+AGGREGATOR_HOSTS = (
+    "linkedin.com",
+    "indeed.com",
+    "ziprecruiter.com",
+    "google.com",
+    "jobright.ai",
+    "bebee.com",
+    "talent.com",
+    "builtin.com",
+    "bandana.com",
+    "trabajo.org",
+    "jobrapido.com",
+)
 CANONICAL_JOB_HOST_MARKERS = (
     "greenhouse.io",
     "lever.co",
@@ -23,7 +35,12 @@ CANONICAL_JOB_HOST_MARKERS = (
     "myworkdayjobs.com",
     "jobs.apple.com",
     "careers.google.com",
+    "google.com/about/careers",
+    "careers.microsoft.com",
     "amazon.jobs",
+    "metacareers.com",
+    "nvidia.com/en-us/about-nvidia/careers",
+    "tesla.com/careers",
 )
 
 
@@ -226,6 +243,43 @@ class SerpApiGoogleJobsProvider:
             raise SearchProviderError(f"SerpAPI Google Jobs failed: {error}") from error
 
 
+class PriorityGoogleJobsProvider:
+    """Structured Google Jobs lookup isolated to one priority employer."""
+
+    name = "priority_google_jobs"
+
+    def __init__(
+        self,
+        companies: tuple[str, ...],
+        *,
+        search_provider: SearchProvider | None = None,
+    ) -> None:
+        self.companies = companies
+        self.search_provider = search_provider or SerpApiGoogleJobsProvider()
+
+    async def search(self, query: str, *, limit: int) -> tuple[SearchResult, ...]:
+        company = next(
+            (item for item in self.companies if item.casefold() == query.casefold()),
+            None,
+        )
+        if company is None:
+            raise SearchProviderError(f"Unknown priority company {query!r}.")
+        role_clause = (
+            '("software engineer" OR "platform engineer" OR '
+            '"infrastructure engineer" OR SDET OR "applied AI engineer" OR '
+            '"forward deployed engineer")'
+        )
+        results = await self.search_provider.search(
+            f'{company} {role_clause} jobs in "United States"',
+            limit=limit,
+        )
+        return tuple(
+            result
+            for result in results
+            if result.company and _company_name_matches(company, result.company)
+        )
+
+
 class GreenhouseBoardProvider:
     """Fetch every published job from configured public Greenhouse boards."""
 
@@ -422,6 +476,49 @@ class CompanyCareerPageProvider:
             raise SearchProviderError(f"Company career page {query!r} failed: {error}") from error
 
 
+class PriorityCompanySearchProvider:
+    """Bounded public search scoped to one configured company career domain."""
+
+    name = "priority_company_search"
+
+    def __init__(
+        self,
+        pages: dict[str, str],
+        *,
+        search_provider: SearchProvider | None = None,
+    ) -> None:
+        self.pages = pages
+        self.search_provider = search_provider or BraveSearchProvider()
+
+    async def search(self, query: str, *, limit: int) -> tuple[SearchResult, ...]:
+        company = _configured_company(self.pages, query, "priority company")
+        host = urlsplit(query).netloc.casefold().removeprefix("www.")
+        if not host:
+            raise SearchProviderError(f"Priority company URL {query!r} has no host.")
+        role_clause = (
+            '("software engineer" OR "platform engineer" OR '
+            '"infrastructure engineer" OR SDET OR "quality automation" OR '
+            '"applied AI engineer" OR "AI automation engineer" OR '
+            '"forward deployed engineer")'
+        )
+        # Career pages frequently keep the location outside the indexed title or
+        # snippet. Requiring a US term here hid valid Apple, Microsoft, and Meta
+        # roles. The extractor and US policy layer remain the authoritative
+        # location gate after discovery.
+        search_query = f"site:{host} {role_clause} jobs"
+        results = await self.search_provider.search(search_query, limit=limit)
+        return tuple(
+            result.model_copy(
+                update={
+                    "company": company,
+                    "source": f"{company} careers search",
+                }
+            )
+            for result in results
+            if _target_role_title(result.title)
+        )
+
+
 def create_search_provider(name: str | None = None) -> SearchProvider:
     provider = (name or os.getenv("JOB_SEARCH_PROVIDER", "brave")).casefold()
     if provider == "brave":
@@ -438,39 +535,65 @@ def create_search_provider(name: str | None = None) -> SearchProvider:
 def _google_jobs_result(row: dict[str, object]) -> SearchResult:
     options = row.get("apply_options")
     apply_options = options if isinstance(options, list) else []
-    url = _preferred_apply_url(apply_options)
+    company = str(row["company_name"])
+    url = _preferred_apply_url(apply_options, company=company)
     if not url:
         job_id = str(row.get("job_id") or "")
         url = f"https://www.google.com/search?q={job_id}" if job_id else ""
+    description = str(row.get("description") or "").strip()
+    extensions = row.get("detected_extensions")
+    detected = extensions if isinstance(extensions, dict) else {}
+    location = str(row.get("location") or "").strip()
     return SearchResult(
         title=str(row["title"]),
         url=url,
-        snippet=str(row.get("description") or ""),
+        snippet=description,
         source=str(row.get("via") or "Google Jobs"),
         source_job_id=str(row.get("job_id") or "") or None,
-        company=str(row["company_name"]),
-        location=str(row.get("location") or "") or None,
+        company=company,
+        description=description or None,
+        location=location or None,
+        employment_type=str(detected.get("schedule_type") or "") or None,
+        workplace_type=("Remote" if "remote" in location.casefold() else None),
+        canonical_content=bool(description),
     )
 
 
-def _preferred_apply_url(options: list[object]) -> str:
+def _preferred_apply_url(options: list[object], *, company: str | None = None) -> str:
     links = [
-        str(option.get("link"))
+        (str(option.get("title") or ""), str(option.get("link")))
         for option in options
         if isinstance(option, dict) and option.get("link")
     ]
     if not links:
         return ""
 
-    def rank(url: str) -> tuple[int, str]:
+    def rank(item: tuple[str, str]) -> tuple[int, str]:
+        title, url = item
         host = urlsplit(url).netloc.casefold()
-        if any(marker in host for marker in CANONICAL_JOB_HOST_MARKERS):
+        target = url.casefold()
+        title_hint = title.casefold()
+        if company and _company_name_matches(company, title):
             return (0, url)
+        if any(word in title_hint for word in ("company", "employer", "career")):
+            return (1, url)
+        if any(marker in target for marker in CANONICAL_JOB_HOST_MARKERS):
+            return (1, url)
         if any(marker in host for marker in AGGREGATOR_HOSTS):
-            return (2, url)
-        return (1, url)
+            return (3, url)
+        return (2, url)
 
-    return min(links, key=rank)
+    return min(links, key=rank)[1]
+
+
+def _company_name_matches(configured: str, discovered: str) -> bool:
+    configured_name = " ".join(re.findall(r"[a-z0-9]+", configured.casefold()))
+    discovered_name = " ".join(re.findall(r"[a-z0-9]+", discovered.casefold()))
+    return bool(
+        configured_name == discovered_name
+        or discovered_name.startswith(configured_name + " ")
+        or configured_name.startswith(discovered_name + " ")
+    )
 
 
 def _lever_description(row: dict[str, object]) -> str:

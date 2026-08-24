@@ -68,6 +68,24 @@ def test_falls_back_to_common_dom_fields() -> None:
     assert posting.sponsorship_status is SponsorshipStatus.NO
 
 
+def test_uses_known_search_company_when_page_omits_company() -> None:
+    posting = extract_posting(
+        """
+        <main>
+          <h1>Platform Engineer</h1>
+          <div class="job-description">Build Python infrastructure.</div>
+        </main>
+        """,
+        SearchResult(
+            title="Platform Engineer",
+            url="https://jobs.example.com/42",
+            company="Known Employer",
+        ),
+    )
+
+    assert posting.company == "Known Employer"
+
+
 def test_extracts_efinancialcareers_company_info() -> None:
     posting = extract_posting(
         """

@@ -33,6 +33,11 @@ Confirm `.env` contains the correct `RESUME_PROFILE_PATH` and `RESUME_PROFILE_ID
 
 Hard-filtered jobs do not call either AI provider.
 
+If a run previously remained active indefinitely during scoring, keep
+`REQUEST_TIMEOUT_SECONDS` set to a positive value such as `30`. A timed-out
+Gemini request now falls back to Ollama; if that also fails, the individual
+posting is reported without freezing the scheduler.
+
 ## Extension cannot extract a posting
 
 - Confirm the active tab is an HTTP or HTTPS job-detail page.
@@ -58,6 +63,18 @@ For scheduled discovery, inspect the `tracks_run`, `failed_tracks`, and
 without a search API key. Track B requires SerpAPI; Track C requires Brave. A
 nonzero `deferred` count means the `MAX_SCORING_JOBS_PER_RUN` safety ceiling was
 reached, not that those roles were rejected.
+
+For missing Apple, Google, Microsoft, Amazon, Meta, NVIDIA, or Tesla results,
+run `.\.venv\Scripts\python.exe -m scripts.check_priority_sources`. Confirm
+that every priority employer also has a matching `CUSTOM_CAREER_PAGES` entry.
+The priority search does not require location keywords; every result still must
+pass the downstream USA-only extraction policy.
+
+The dashboard header reads `logs/last_run_status.txt`. **Discovery failed**
+means the last scheduled command exited nonzero; inspect
+`logs/errors_in_last_run.txt` and the current dated log before considering API
+quota. A third-party job page returning 401/403/429 is not the same as Brave or
+SerpAPI rejecting the search request.
 
 JobRadar is intentionally US-only. A posting is excluded when its normalized
 location and description do not verify United States eligibility. `Remote` by

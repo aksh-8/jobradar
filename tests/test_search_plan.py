@@ -4,6 +4,7 @@ from agent.search_plan import (
     GAP_SOURCE_CLAUSE,
     LOCATION_TIERS,
     ROLE_FAMILIES,
+    DEFAULT_PRIORITY_COMPANIES,
     brave_gap_queries,
     configured_discovery_tracks,
     configured_mapping,
@@ -17,26 +18,27 @@ def test_google_jobs_queries_cover_every_role_and_location_without_sponsorship()
     assert len(queries) == len(ROLE_FAMILIES) * len(LOCATION_TIERS)
     assert any("Los Angeles" in query for query in queries)
     assert any("Remote, United States" in query for query in queries)
-    assert any("East Coast, United States" in query for query in queries)
-    assert LOCATION_TIERS.index("Remote, United States") < LOCATION_TIERS.index(
-        "California"
+    assert LOCATION_TIERS == (
+        "Los Angeles, California",
+        "Remote, United States",
+        "United States",
     )
     assert all("sponsorship" not in query.casefold() for query in queries)
 
 
 def test_brave_gap_queries_explicitly_cover_linkedin_indeed_and_ziprecruiter() -> None:
     queries = brave_gap_queries(
-        priority_companies=("Apple",), fde_companies=("Glean",)
+        fde_companies=("Glean",)
     )
 
     assert "linkedin.com/jobs/view" in GAP_SOURCE_CLAUSE
     assert "indeed.com/viewjob" in GAP_SOURCE_CLAUSE
     assert "ziprecruiter.com/jobs" in GAP_SOURCE_CLAUSE
-    assert any('"Apple"' in query for query in queries)
     assert any('"Glean"' in query for query in queries)
+    assert {"NVIDIA", "Tesla"} <= set(DEFAULT_PRIORITY_COMPANIES)
 
 
-def test_configured_tracks_build_three_track_sources(monkeypatch) -> None:
+def test_configured_tracks_build_multi_source_schedule(monkeypatch) -> None:
     monkeypatch.setenv("GREENHOUSE_BOARDS", "scaleai=Scale AI")
     monkeypatch.setenv("LEVER_BOARDS", "cohere=Cohere")
     monkeypatch.setenv("ASHBY_BOARDS", "glean=Glean")
@@ -51,6 +53,8 @@ def test_configured_tracks_build_three_track_sources(monkeypatch) -> None:
         "priority_lever",
         "priority_ashby",
         "priority_custom_careers",
+        "priority_company_search",
+        "priority_google_jobs",
         "google_jobs",
         "brave_gaps",
     }
@@ -59,6 +63,8 @@ def test_configured_tracks_build_three_track_sources(monkeypatch) -> None:
         "priority_lever": 2,
         "priority_ashby": 2,
         "priority_custom_careers": 2,
+        "priority_company_search": 4,
+        "priority_google_jobs": 4,
         "google_jobs": 4,
         "brave_gaps": 12,
     }
