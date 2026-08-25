@@ -419,6 +419,7 @@ def test_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "Outreach details" in response.text
     assert "People to contact" in response.text
     assert "Checking discovery" in response.text
+    assert 'data-status="QUALIFIED"' in response.text
     assert script.status_code == 200
     assert "loadJobs" in script.text
     assert 'fetch("/api/score-url"' in script.text
@@ -430,3 +431,4 @@ def test_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "findContacts" in script.text
     assert 'fetch("/api/discovery/status")' in script.text
     assert 'classList.toggle("current", isCurrentStatus)' in script.text
+    assert 'details(job).verdict === "QUALIFIED"' in script.text

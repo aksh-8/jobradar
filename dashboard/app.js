@@ -35,7 +35,9 @@ function updateMetrics() {
 function filteredJobs() {
   const query = state.search.toLowerCase();
   return state.jobs.filter((job) => {
-    const matchesStatus = state.status === "ALL" || job.status === state.status;
+    const matchesStatus = state.status === "ALL"
+      || (state.status === "QUALIFIED" && details(job).verdict === "QUALIFIED")
+      || job.status === state.status;
     const matchesSearch = !query || `${job.title} ${job.company}`.toLowerCase().includes(query);
     return matchesStatus && matchesSearch;
   });
