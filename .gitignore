@@ -53,6 +53,9 @@ extension/*.pem
 *.db-wal
 *.sqlite
 *.sqlite3
+*.log
+*.pid
+*.pid.lock
 data/
 logs/
 

@@ -12,6 +12,40 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 
 Stop it with `Ctrl+C`. The dashboard and extension cannot call the API while this process is stopped.
 
+For unattended operation, use the non-reloading runner instead:
+
+```powershell
+.\scripts\run_api.ps1
+```
+
+It binds only to loopback, prevents duplicate scheduled instances, and appends
+runtime output to the private ignored file `logs/api.log`.
+
+## Private access with Tailscale Serve
+
+JobRadar can remain on this Windows PC while the dashboard is available to
+your own Tailscale devices. Tailscale provides private HTTPS and proxies it to
+the loopback-only API; do not enable Tailscale Funnel because the API has no
+public-internet authentication layer.
+
+1. Install Tailscale on this PC and sign in.
+2. Install Tailscale on each phone or laptop and sign in to the same tailnet.
+3. Keep the backend bound to `127.0.0.1:8000`.
+4. Configure the private proxy:
+
+   ```powershell
+   tailscale serve --bg 8000
+   tailscale serve status
+   ```
+
+5. Open the reported `https://<device>.<tailnet>.ts.net/dashboard/` address
+   from another signed-in Tailscale device.
+
+Tailscale starts with Windows and preserves the Serve configuration. The
+JobRadar API itself should be registered as an at-logon Task Scheduler task
+using `scripts/run_api.ps1`. The existing discovery task remains separate and
+continues to run every two hours even when nobody has the dashboard open.
+
 ## Score a job from the browser
 
 1. Start the backend and confirm `/health` returns `status: ok`.

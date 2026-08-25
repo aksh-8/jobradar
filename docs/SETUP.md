@@ -109,5 +109,9 @@ Keep the terminal open. Verify:
 
 The health endpoint checks server/database readiness and whether Gemini appears configured. It does not make a paid provider request.
 
+For private access from your other devices and automatic API startup, follow
+**Private access with Tailscale Serve** in [OPERATIONS.md](OPERATIONS.md). Keep
+Uvicorn bound to `127.0.0.1`; Tailscale Serve is the only remote entry point.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md) for track intervals, identity precedence,
 and the exact scoring and sponsorship policy.
