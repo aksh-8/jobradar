@@ -350,6 +350,21 @@ async def test_applied_job_becomes_due_for_follow_up(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_applied_job_is_not_returned_to_pending_digest(tmp_path: Path) -> None:
+    path = tmp_path / "applied-digest.db"
+    job_id = await save_scored_job(
+        posting(),
+        result(),
+        source="brave",
+        url="https://example.com/jobs/already-applied",
+        database_path=path,
+    )
+    await update_job_status(job_id, JobStatus.APPLIED, database_path=path)
+
+    assert await list_pending_digest_jobs(database_path=path) == ()
+
+
+@pytest.mark.asyncio
 async def test_weekly_missing_skills_are_aggregated(tmp_path: Path) -> None:
     path = tmp_path / "jobs.db"
     await save_scored_job(
@@ -423,6 +438,36 @@ async def test_cross_source_identity_prefers_ats_then_natural_key(tmp_path: Path
     assert match is not None
     assert match.job_id == job_id
     assert match.matched_by == "company_title_location"
+
+
+@pytest.mark.asyncio
+async def test_direct_priority_career_url_replaces_google_jobs_aggregator(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "apple-url.db"
+    apple = posting().model_copy(
+        update={"company": "Apple", "title": "Platform Engineer"}
+    )
+    job_id = await save_scored_job(
+        apple,
+        result(),
+        source="serpapi_google_jobs",
+        url="https://indeed.com/viewjob?jk=apple-platform",
+        database_path=path,
+    )
+
+    refreshed_id = await save_scored_job(
+        apple,
+        result(),
+        source="priority_company_search",
+        url="https://jobs.apple.com/en-us/details/200/platform-engineer",
+        database_path=path,
+    )
+
+    jobs = await list_jobs(database_path=path)
+    assert refreshed_id == job_id
+    assert jobs[0].source == "priority_company_search"
+    assert jobs[0].url == "https://jobs.apple.com/en-us/details/200/platform-engineer"
 
 
 @pytest.mark.asyncio

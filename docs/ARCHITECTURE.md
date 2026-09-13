@@ -51,46 +51,61 @@ remain running.
 16. One text/HTML digest compiles new roles, outreach, follow-ups, and weekly
     skill gaps. Delivery occurs only with `--send-email`/`-SendEmail`.
 
+`ScoringResult.skills_matched` is computed in application code from the selected
+verified resume and posting. Outreach never interpolates the model's raw JD
+requirement text. Older stored scores without this field fall back to verified
+capabilities from their recorded resume variant.
+
+Cover-letter generation is separate from scoring and runs only after an explicit
+user action. `POST /api/cover-letter` accepts either a stored job ID or the
+posting/score pair held by the extension, resolves the recorded READY resume,
+and calls `COVER_LETTER_MODEL` with temperature zero. The default inherits the
+existing Gemini scoring model so cover letters do not silently opt into a paid
+Pro tier. Its plain-text response is not persisted.
+
 ## Discovery tracks
 
-### Track A: priority company monitors, every two hours
+### Tier 1: verified direct ATS monitors, every two hours
 
 Public Greenhouse, Lever, and Ashby adapters enumerate configured boards without
-waiting for search-engine indexing. A generic public career-page adapter covers
-custom systems such as Apple, Google, Microsoft, Amazon, Meta, NVIDIA, and
-Tesla. The generic
-adapter follows job-like links; JavaScript-only career sites may still need a
-dedicated adapter.
+waiting for search-engine indexing. Only slugs validated against the live public
+ATS endpoint belong in these mappings; a company name is not an ATS slug.
 
 Source configuration uses pipe-delimited `key=Company` values:
 
 ```dotenv
-GREENHOUSE_BOARDS="scaleai=Scale AI|gleanwork=Glean"
+GREENHOUSE_BOARDS="scaleai=Scale AI|gleanwork=Glean|affirm=Affirm|anthropic=Anthropic|block=Block|cloudflare=Cloudflare|databricks=Databricks|figma=Figma|flexport=Flexport|lyft=Lyft|pagerduty=PagerDuty|singlestore=SingleStore|verkada=Verkada|zscaler=Zscaler"
 LEVER_BOARDS=
-ASHBY_BOARDS="cohere=Cohere"
+ASHBY_BOARDS="cohere=Cohere|linear=Linear"
 CUSTOM_CAREER_PAGES="Apple=https://jobs.apple.com/en-us/search"
+ENABLE_CUSTOM_CAREER_POLLING=false
 ```
 
 ATS payloads are authoritative content and are normalized without refetching the
 hosted HTML. Direct board rows are title-gated to the configured engineering
 families. A board result may proceed to extraction with incomplete location
 metadata, but it must produce verified US location evidence before persistence
-or scoring. Custom career results are fetched at their individual posting URL.
+or scoring. Generic custom-page polling is disabled by default because most
+large proprietary career sites render with JavaScript. `CUSTOM_CAREER_PAGES`
+still supplies authoritative domains for scoped Brave searches.
 
-### Track B: Google Jobs, every four hours
+### Tier 2: bounded Brave coverage, every twelve hours
 
-SerpAPI is called with `engine=google_jobs`. The adapter follows
-`next_page_token`, extracts Google job IDs and locations, and selects an
-application URL from `apply_options`. Company/ATS URLs outrank arbitrary sites,
-which outrank LinkedIn/Indeed/ZipRecruiter aggregator URLs.
+One cycle uses exactly nine base Brave requests:
 
-Five role families are crossed with three non-overlapping location queries.
-Seven additional company-specific searches isolate the configured priority
-employers and retain Google Jobs' structured descriptions when their own career
-pages require JavaScript or block direct extraction. A normal four-hour cycle
-therefore uses 22 base SerpAPI requests rather than the previous 30-query broad
-matrix. Sponsorship language is deliberately absent from discovery queries; it
-is evaluated from the actual posting instead.
+1. Five nationwide role-family searches.
+2. One combined Los Angeles/Greater Los Angeles search.
+3. One combined US-remote search.
+4. One fixed `site:jobs.apple.com` career search.
+5. One official career-domain search for a non-Apple priority company, rotated
+   deterministically once per calendar day.
+
+The nationwide searches explicitly cover public LinkedIn, Indeed,
+ZipRecruiter, Workday, and SmartRecruiters results while retaining a broad
+`careers` alternative for proprietary company sites. JobRadar never logs into
+or scrapes an authenticated LinkedIn session. Sponsorship terms are deliberately
+absent from search queries; the actual description and company policy control
+eligibility.
 
 Role families:
 
@@ -100,54 +115,31 @@ Role families:
 - AI Automation / Applied AI Engineer
 - Forward Deployed Engineer / Forward Deployed Software Engineer
 
-Location tiers:
+At two cycles per day this is 18 scheduled Brave requests per day, or about 540
+in a 30-day month. Direct ATS polling does not consume Brave requests. Contact
+discovery and manual searches use additional requests and remain user-initiated.
 
-- Los Angeles, California
-- Remote, United States
-- United States
+Brave is a recall/backstop source. Scoped priority searches discard any result
+outside the configured official host. Their direct company-career URLs outrank
+legacy Google Jobs and aggregator links when a duplicate is refreshed. Apple
+therefore opens on `jobs.apple.com` whenever that canonical posting is found.
+The Apple adapter reads the official page's embedded router payload so the full
+description, location, posting date, and compensation can be normalized without
+a headless browser.
 
-California, East Coast, and other domestic roles are recovered by the broad
-United States run and ordered later by the shared dashboard/digest location
-policy.
+### Optional legacy SerpAPI compatibility
 
-### Track C: Brave gaps, every twelve hours
-
-Brave runs source-specific searches across LinkedIn, Indeed, ZipRecruiter,
-Workday, SmartRecruiters, and configured FDE companies. LinkedIn is
-intentionally included here rather than accessed through an authenticated
-scraper or nonexistent unrestricted job-seeker API.
-
-Brave is a recall/backstop source. It is not treated as the authoritative job
-record, and every result must still produce a readable job-description page.
-
-### Priority-company public search, every four hours
-
-Each configured priority company receives its own bounded Brave query scoped to
-the company's career domain. This prevents a combined `Apple OR Google OR ...`
-query from allowing one employer to consume every result. The default priority
-set is Apple, Google, Microsoft, Amazon, Meta, NVIDIA, and Tesla. Known company
-identity is attached to each result before extraction, which recovers postings
-whose rendered page omits structured `hiringOrganization` metadata.
-The query deliberately does not require a location term because several career
-sites keep location outside their indexed title and snippet. The extractor and
-USA-only policy remain the authoritative location gate.
-
-The parallel `priority_google_jobs` track performs one structured Google Jobs
-query per priority employer. It filters returned company names before scoring,
-so similarly worded roles from unrelated employers cannot enter through a
-company-specific query. This is the primary structured fallback for
-JavaScript-only career pages; Brave remains the independent recall check.
-
-When SerpAPI Google Jobs supplies a full description, that payload is treated
-as canonical discovery content. Employer-labeled and known ATS application URLs
-outrank aggregator URLs, avoiding unnecessary fetches from sites that commonly
-return 401/403 responses.
+The Google Jobs adapters remain available for experiments, but scheduled
+SerpAPI discovery is off by default and is not a required credential. It runs
+only when both `ENABLE_SERPAPI_DISCOVERY=true` and a real `SERPAPI_API_KEY` are
+configured. The production personal deployment uses direct ATS feeds and Brave.
 
 ## Durable track scheduling
 
 The `discovery_track_runs` table stores the last start, completion, status, and
 error for each track. The two-hour Windows task can therefore invoke one command
-while JobRadar independently enforces two-, four-, and twelve-hour intervals.
+while JobRadar independently enforces two- and twelve-hour intervals (plus
+four-hour intervals only if legacy SerpAPI discovery is deliberately enabled).
 Failed tracks are due again on the next invocation. `--force-all-tracks` bypasses
 interval checks for validation.
 
@@ -171,8 +163,8 @@ JobRadar evaluates identity in this order:
 
 The exact normalized posting facts are also hashed. An identity match with the
 same content hash is unchanged; a different hash is rescored. When multiple
-sources describe one role, direct ATS URLs outrank company pages, Google Jobs,
-ordinary search, and Brave for the stored application URL.
+sources describe one role, direct ATS and scoped official career URLs outrank
+legacy Google Jobs and aggregator pages for the stored application URL.
 
 The fuzzy layer is intentionally conservative but remains heuristic. Same-title
 requisitions at one company/location can still require an ATS ID to remain
@@ -288,6 +280,10 @@ roles remain pending until the email provider succeeds, so a delivery failure
 does not lose a deduplicated role. Application status schedules a follow-up
 after the configured interval.
 
+Applied roles remain durable records, but their dashboard view is exclusive:
+they appear only under **Applied** and are excluded from pending opportunity
+digests and weekly missing-skill aggregation.
+
 The availability audit checks a bounded, score-prioritized set of non-skipped
 roles concurrently. `AVAILABILITY_CHECK_LIMIT` defaults to 20 and
 `AVAILABILITY_CHECK_INTERVAL_HOURS` defaults to 12. Explicit page closure text
@@ -315,12 +311,12 @@ associations in search indexes can be stale.
 
 ## Known limitations and review questions
 
-- Generic custom-career monitoring cannot guarantee coverage on JavaScript-only
-  sites; high-priority systems should receive dedicated adapters and fixtures.
+- JavaScript-only proprietary career sites other than Apple depend on Brave
+  indexing until they receive a dedicated adapter and fixtures.
 - Direct board configuration is maintained manually and can become stale when a
   company changes ATS.
-- Google Jobs is a third-party SerpAPI dependency and should be monitored for
-  schema and quota changes.
+- SerpAPI is optional legacy compatibility and remains disabled unless explicitly
+  opted in; it is not part of the free production schedule.
 - LinkedIn/Indeed/ZipRecruiter are discovered through public search results; the
   system does not claim complete or real-time coverage of those platforms.
 - Contact suggestions inherit search-index staleness and can be incomplete or

@@ -18,12 +18,13 @@ function details(job) {
 }
 
 function updateMetrics() {
-  const scored = state.jobs.filter((job) => Number.isFinite(job.overall_score));
+  const opportunities = state.jobs.filter((job) => job.status !== "APPLIED");
+  const scored = opportunities.filter((job) => Number.isFinite(job.overall_score));
   const average = scored.length
     ? Math.round(scored.reduce((sum, job) => sum + job.overall_score, 0) / scored.length)
     : null;
-  document.getElementById("metric-total").textContent = state.jobs.length;
-  document.getElementById("metric-qualified").textContent = state.jobs.filter(
+  document.getElementById("metric-total").textContent = opportunities.length;
+  document.getElementById("metric-qualified").textContent = opportunities.filter(
     (job) => details(job).verdict === "QUALIFIED",
   ).length;
   document.getElementById("metric-applied").textContent = state.jobs.filter(
@@ -35,6 +36,11 @@ function updateMetrics() {
 function filteredJobs() {
   const query = state.search.toLowerCase();
   return state.jobs.filter((job) => {
+    if (job.status === "APPLIED") {
+      return state.status === "APPLIED"
+        && (!query || `${job.title} ${job.company}`.toLowerCase().includes(query));
+    }
+    if (state.status === "APPLIED") return false;
     const matchesStatus = state.status === "ALL"
       || (state.status === "QUALIFIED" && details(job).verdict === "QUALIFIED")
       || job.status === state.status;
@@ -104,12 +110,20 @@ async function openOutreach(job, returnFocus) {
   outreachOverlay.setAttribute("aria-hidden", "false");
   document.getElementById("outreach-title").textContent = job.title;
   document.getElementById("outreach-company").textContent = job.company;
+  document.getElementById("playbook-apply").href = job.url;
   document.getElementById("outreach-loading").classList.remove("hidden");
   document.getElementById("outreach-error").classList.add("hidden");
   document.getElementById("outreach-content").classList.add("hidden");
   document.getElementById("contact-results").replaceChildren();
   document.getElementById("contact-status").textContent = "";
   document.getElementById("contact-status").classList.remove("error");
+  document.getElementById("cover-letter-section").classList.add("hidden");
+  document.getElementById("cover-letter-output").value = "";
+  document.getElementById("cover-letter-status").textContent = "";
+  document.getElementById("cover-letter-status").classList.remove("error");
+  const coverButton = document.getElementById("generate-cover-letter");
+  coverButton.disabled = false;
+  coverButton.textContent = "Cover Letter";
   const contactButton = document.getElementById("find-contacts");
   contactButton.disabled = false;
   contactButton.textContent = "Find people";
@@ -209,6 +223,44 @@ async function findContacts(refresh = false) {
       : "No credible public suggestions found. Try a manual LinkedIn company-people search.";
     button.textContent = "Refresh results";
     button.dataset.refresh = "true";
+  } catch (error) {
+    if (state.activeOutreachJobId !== jobId) return;
+    statusElement.textContent = error.message;
+    statusElement.classList.add("error");
+    button.textContent = "Try again";
+  } finally {
+    if (state.activeOutreachJobId === jobId) button.disabled = false;
+  }
+}
+
+async function generateCoverLetter() {
+  const jobId = state.activeOutreachJobId;
+  if (!jobId) return;
+  const button = document.getElementById("generate-cover-letter");
+  const section = document.getElementById("cover-letter-section");
+  const statusElement = document.getElementById("cover-letter-status");
+  const output = document.getElementById("cover-letter-output");
+  button.disabled = true;
+  button.textContent = "Writing...";
+  section.classList.remove("hidden");
+  statusElement.classList.remove("error");
+  statusElement.textContent = "Writing a grounded cover letter with Gemini...";
+  output.value = "";
+  try {
+    const response = await fetch("/api/cover-letter", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: jobId }),
+    });
+    const contentType = response.headers.get("content-type") || "";
+    const body = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text();
+    if (!response.ok) throw new Error(body.detail || "Could not generate the cover letter.");
+    if (state.activeOutreachJobId !== jobId) return;
+    output.value = body;
+    statusElement.textContent = "Ready to copy.";
+    button.textContent = "Regenerate";
   } catch (error) {
     if (state.activeOutreachJobId !== jobId) return;
     statusElement.textContent = error.message;
@@ -330,6 +382,15 @@ document.getElementById("refresh").addEventListener("click", loadJobs);
 document.getElementById("close-outreach").addEventListener("click", closeOutreach);
 document.getElementById("find-contacts").addEventListener("click", (event) => {
   findContacts(event.currentTarget.dataset.refresh === "true");
+});
+document.getElementById("generate-cover-letter").addEventListener("click", generateCoverLetter);
+document.getElementById("copy-cover-letter").addEventListener("click", async (event) => {
+  const output = document.getElementById("cover-letter-output");
+  if (!output.value) return;
+  await navigator.clipboard.writeText(output.value);
+  const button = event.currentTarget;
+  button.textContent = "Copied";
+  setTimeout(() => { button.textContent = "Copy"; }, 1200);
 });
 outreachOverlay.addEventListener("click", (event) => {
   if (event.target === outreachOverlay) closeOutreach();

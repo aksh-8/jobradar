@@ -51,7 +51,9 @@ continues to run every two hours even when nobody has the dashboard open.
 1. Start the backend and confirm `/health` returns `status: ok`.
 2. Open a job posting in Chrome or Edge.
 3. Open the JobRadar extension.
-4. Confirm the API URL and profile ID in **Settings**.
+4. In **Settings**, use `http://127.0.0.1:8000` on this Windows PC. On another
+   Tailscale device, use the private HTTPS origin reported by `tailscale serve
+   status` (without `/dashboard/`) and approve the one-host permission prompt.
 5. Select **Score this job**.
 6. Review hard flags, manual-review signals, score, and rationale.
 7. Open `/dashboard/` to manage its lifecycle.
@@ -73,11 +75,18 @@ Open `http://127.0.0.1:8000/dashboard/` while Uvicorn is running.
   and manually verify current employment before sending any message. JobRadar
   does not log in to, scrape, or message through LinkedIn.
 - **New**, **Viewed**, **Applied**, and **Skipped** filter lifecycle states.
+- **Applied** is exclusive. Applied roles disappear immediately from **All**,
+  **Qualified**, **New**, and **Viewed**, and remain available under **Applied**.
 - Search matches title and company.
 - The header shows **Discovery healthy**, **Discovery failed**, or **Discovery
   unknown** from the latest Task Scheduler runner status. A failure does not
   mean the dashboard API itself is offline.
 - **Mark viewed** and **Applied** persist an event in SQLite.
+- The Application Playbook actions are **Apply**, **Recruiter Message**,
+  **Referral Request**, and **Cover Letter**. Outreach copies deterministic text
+  built from verified resume skills. **Cover Letter** makes one on-demand request
+  to the configured Gemini model, displays plain text in a scrollable field, and
+  stores nothing.
 - **Skip** requires a reason.
 - Every role has **Delete** for manual cleanup of irrelevant results. The
   confirmation is the final guard: deletion permanently removes the job,
@@ -117,14 +126,17 @@ prints the digest.
 
 Without `--query`, the runner uses the scheduled multi-source plan:
 
-- Track A every 2 hours: configured Greenhouse, Lever, Ashby, and custom careers.
-- Priority-company search every 4 hours: one bounded Brave query for each
-  configured career domain (Apple, Google, Microsoft, Amazon, Meta, NVIDIA,
-  and Tesla by default).
-- Track B every 4 hours: SerpAPI `google_jobs` role/location matrix plus one
-  structured query per configured priority employer.
-- Track C every 12 hours: Brave gaps including LinkedIn, Indeed, ZipRecruiter,
-  Workday, SmartRecruiters, and priority companies.
+- Every 2 hours: verified Greenhouse, Lever, and Ashby boards.
+- Every 12 hours: five nationwide Brave role-family searches, one Los Angeles
+  search, and one US-remote search.
+- Every 12 hours: one fixed Apple official-careers search and one official
+  priority-company career domain rotated daily.
+
+This is nine base Brave requests per twelve-hour cycle, approximately 540 per
+30-day month. Direct ATS polling consumes no search requests. SerpAPI is disabled
+unless `ENABLE_SERPAPI_DISCOVERY=true` is deliberately configured with a key.
+Generic direct polling of JavaScript-heavy custom career pages is likewise off
+unless `ENABLE_CUSTOM_CAREER_POLLING=true`.
 
 Intervals are stored in SQLite, so the Windows task should still invoke the
 runner every two hours. Force every configured source during validation with:
@@ -139,10 +151,9 @@ The result budget is shared fairly across every query. Model-scored work is
 separately capped by `MAX_SCORING_JOBS_PER_RUN` (default 50); excess eligible
 postings are printed as `deferred` and remain available for a later run.
 
-Google Jobs descriptions are treated as structured discovery content when
-present. JobRadar prefers employer-labeled or known ATS application links and
-does not require a second fetch from blocked aggregators such as Indeed or
-ZipRecruiter before applying policy and scoring.
+JobRadar prefers direct ATS and scoped official-company URLs over aggregator
+links. Apple-specific search results are restricted to `jobs.apple.com`, whose
+embedded official posting payload is extracted without browser automation.
 
 Each scheduled invocation also rechecks up to `AVAILABILITY_CHECK_LIMIT`
 score-prioritized saved roles when their last check is older than
@@ -160,6 +171,9 @@ Delivery occurs only with the explicit flag:
 For Gmail, configure `GMAIL_USERNAME` and an app password. For SendGrid, configure `SENDGRID_API_KEY` and a verified `SENDGRID_FROM_EMAIL`. Always run a dry run first.
 
 Qualified discovery jobs remain pending in SQLite until email delivery succeeds. A provider failure therefore does not lose roles on the next deduplicated run. Empty emails are skipped unless `SEND_EMPTY_DIGEST=true`.
+
+Marking a role **Applied** removes it from the pending digest and weekly
+missing-skill pool. Follow-up reminders remain available for applied roles.
 
 ## Two-hour scheduling on Windows
 
@@ -197,13 +211,12 @@ email, run:
 .\.venv\Scripts\python.exe -m scripts.check_priority_sources
 ```
 
-This performs one bounded public search per configured priority career domain
-and prints only result counts and titles. Zero is a coverage signal, not proof
-that the company has no open roles.
+This checks the fixed Apple search and today's one rotating priority-company
+search, then prints only result counts and titles. Zero is a coverage signal,
+not proof that the company has no open roles.
 
-Add `--google-jobs` to inspect the structured priority-employer path. That mode
-consumes one SerpAPI request per configured priority company, so use it for
-diagnosis rather than routine polling.
+The optional `--google-jobs` diagnostic is legacy SerpAPI compatibility. Do not
+use it in the free production schedule.
 
 Each runner invocation appends output to `logs/jobradar-YYYY-MM-DD.log` and
 rewrites both `logs/last_run_status.txt` and `logs/errors_in_last_run.txt`.

@@ -40,6 +40,7 @@ SOURCE_PREFERENCE = {
     "lever": 0,
     "ashby": 0,
     "company_career": 1,
+    "priority_company_search": 1,
     "extension": 1,
     "serpapi_google_jobs": 2,
     "serpapi": 3,
@@ -345,7 +346,7 @@ async def list_availability_check_candidates(
             SELECT id, title, url, source
             FROM jobs
             WHERE closed_at IS NULL
-              AND status != 'SKIPPED'
+              AND status NOT IN ('SKIPPED', 'APPLIED')
               AND (
                   availability_checked_at IS NULL
                   OR datetime(availability_checked_at) <= datetime('now', ?)
@@ -636,7 +637,7 @@ async def list_pending_digest_jobs(
                   'brave', 'serpapi', 'serpapi_google_jobs', 'greenhouse',
                   'lever', 'ashby', 'company_career'
               )
-              AND status != 'SKIPPED'
+              AND status NOT IN ('SKIPPED', 'APPLIED')
               AND closed_at IS NULL
               AND overall_score >= ?
             ORDER BY overall_score DESC, first_discovered_at, id
@@ -794,7 +795,7 @@ async def weekly_missing_skills(
                    valid_through, closed_at
             FROM jobs
             WHERE score_details IS NOT NULL
-              AND status != 'SKIPPED'
+              AND status NOT IN ('SKIPPED', 'APPLIED')
               AND closed_at IS NULL
               AND datetime(first_discovered_at) >= datetime('now', '-7 days')
             """

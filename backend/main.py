@@ -11,9 +11,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict, HttpUrl, model_validator
 
+from agent.cover_letter import (
+    CoverLetterGenerationError,
+    GeminiCoverLetterGenerator,
+)
 from agent.contact_discovery import (
     ContactDiscoveryError,
     ContactSuggestion,
@@ -155,6 +160,22 @@ class ContactSuggestionsResponse(ApiModel):
     suggestions: tuple[ContactSuggestion, ...]
 
 
+class CoverLetterRequest(ApiModel):
+    """Either a stored job or the score payload already held by the extension."""
+
+    job_id: int | None = None
+    posting: JobPostingFacts | None = None
+    score: ScoringResult | None = None
+
+    @model_validator(mode="after")
+    def source_is_complete(self):
+        stored = self.job_id is not None
+        inline = self.posting is not None or self.score is not None
+        if stored == inline or (inline and (self.posting is None or self.score is None)):
+            raise ValueError("Provide either job_id, or both posting and score.")
+        return self
+
+
 class DiscoveryHealthResponse(ApiModel):
     """Non-secret state from the most recent scheduled discovery invocation."""
 
@@ -239,6 +260,7 @@ def create_app(
     resume_catalog: ResumeCatalog | None = None,
     posting_extractor: PostingExtractor | None = None,
     contact_finder: PublicContactFinder | None = None,
+    cover_letter_generator: GeminiCoverLetterGenerator | None = None,
     runtime_log_directory: str | Path | None = None,
 ) -> FastAPI:
     """Build an application with replaceable dependencies for isolated tests."""
@@ -258,6 +280,9 @@ def create_app(
     application.state.resume_catalog = resume_catalog or configured_resume_catalog()
     application.state.posting_extractor = posting_extractor or PostingExtractor()
     application.state.contact_finder = contact_finder or PublicContactFinder()
+    application.state.cover_letter_generator = (
+        cover_letter_generator or GeminiCoverLetterGenerator()
+    )
     application.state.runtime_log_directory = Path(
         runtime_log_directory
         or Path(__file__).resolve().parent.parent / "logs"
@@ -337,7 +362,11 @@ def _build_routes():
         )
         if details is None:
             raise HTTPException(status_code=404, detail="US-based scored job not found.")
-        guidance = build_outreach(details.posting, details.score)
+        profile = _profile_for_score(
+            request.app.state.resume_catalog,
+            details.score,
+        )
+        guidance = build_outreach(details.posting, details.score, profile)
         return OutreachResponse(
             job_id=details.id,
             title=details.posting.title,
@@ -405,6 +434,46 @@ def _build_routes():
             cached=False,
             suggestions=suggestions,
         )
+
+    @router.post("/api/cover-letter", response_class=PlainTextResponse)
+    async def cover_letter(
+        payload: CoverLetterRequest,
+        request: Request,
+    ) -> PlainTextResponse:
+        if payload.job_id is not None:
+            details = await get_scored_job_details(
+                payload.job_id,
+                database_path=request.app.state.database_path,
+            )
+            if details is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="US-based scored job not found.",
+                )
+            posting = details.posting
+            score = details.score
+        else:
+            posting = payload.posting
+            score = payload.score
+        assert posting is not None and score is not None
+
+        profile = _profile_for_score(request.app.state.resume_catalog, score)
+        if profile is None:
+            raise HTTPException(
+                status_code=422,
+                detail="The selected READY resume profile is unavailable.",
+            )
+        generator: GeminiCoverLetterGenerator = (
+            request.app.state.cover_letter_generator
+        )
+        try:
+            letter = await generator.generate(posting, score, profile)
+        except CoverLetterGenerationError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+            ) from error
+        return PlainTextResponse(letter)
 
     @router.post(
         "/api/jobs/{job_id}/check-availability",
@@ -599,6 +668,19 @@ def _build_routes():
         )
 
     return router
+
+
+def _profile_for_score(
+    catalog: ResumeCatalog,
+    score: ScoringResult,
+) -> ResumeProfile | None:
+    if not score.resume_profile_id:
+        return None
+    try:
+        profile = catalog.get(score.resume_profile_id)
+    except ResumeProfileNotFoundError:
+        return None
+    return profile if profile.status is ResumeStatus.READY else None
 
 
 app = create_app()

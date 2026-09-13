@@ -72,6 +72,11 @@ h2 { font-family: Georgia, serif; font-size: 24px; font-weight: 500; margin: 0; 
 .panel-notice.error { color: #9b342f; }
 .outreach-meta { display: flex; flex-wrap: wrap; gap: 7px; padding: 18px 0 4px; }
 .outreach-meta span { background: #e8eee9; border-radius: 999px; color: #31503d; font-size: 10px; font-weight: 750; padding: 6px 9px; }
+.playbook-actions { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 16px 0 4px; }
+.playbook-actions a, .playbook-actions button { align-items: center; background: #173f2c; border: 1px solid #173f2c; border-radius: 8px; color: #fff; cursor: pointer; display: flex; font-size: 11px; font-weight: 750; justify-content: center; min-height: 38px; padding: 8px 10px; text-align: center; text-decoration: none; }
+.playbook-actions button:last-child { background: #d5a544; border-color: #d5a544; color: #172019; }
+.playbook-actions button:disabled { cursor: wait; opacity: .65; }
+.cover-letter-section textarea { background: #fff; border: 1px solid #ccd3cc; border-radius: 8px; box-sizing: border-box; color: #303b33; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; height: 260px; padding: 12px; resize: vertical; width: 100%; }
 .outreach-content section { border-top: 1px solid #e1e3dd; padding: 20px 0; }
 .outreach-content section:first-of-type { border-top: 0; }
 .outreach-content h3 { color: #24422f; font-size: 11px; letter-spacing: .11em; margin: 0 0 9px; text-transform: uppercase; }

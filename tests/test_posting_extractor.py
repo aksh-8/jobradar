@@ -1,5 +1,7 @@
 """Tests for server-side job page normalization."""
 
+import json
+
 import httpx
 import pytest
 
@@ -101,6 +103,91 @@ def test_extracts_efinancialcareers_company_info() -> None:
 
     assert posting.company == "JPMorgan Chase & Co."
     assert posting.location == "Plano, United States"
+
+
+def test_extracts_apple_hydration_payload_from_official_job_page() -> None:
+    job = {
+        "jobNumber": "200664455",
+        "positionId": "200664455",
+        "postingTitle": "Lead Forward Deployed Engineer",
+        "employmentType": "Standard",
+        "postDateInGMT": "2026-05-21T17:41:40.989+00:00",
+        "homeOffice": False,
+        "localeLocation": [
+            {
+                "city": "Seattle",
+                "stateProvince": "Washington",
+                "countryName": "United States",
+                "active": True,
+            }
+        ],
+        "localizations": {
+            "en_US": {
+                "posting": {
+                    "postingTitle": "Lead Forward Deployed Engineer",
+                    "jobSummary": "Build trustworthy AI evaluation systems.",
+                    "description": "Partner with platform and product teams.",
+                    "responsibilities": "Deliver production integrations.",
+                    "minimumQualifications": "Five years of engineering experience.",
+                    "preferredQualifications": "Experience with evaluation frameworks.",
+                }
+            }
+        },
+        "postingFooters": [
+            {
+                "localizations": {
+                    "en_US": [
+                        {
+                            "content": (
+                                "The base pay range for this role is between "
+                                "$175,000 and $263,300."
+                            )
+                        }
+                    ]
+                }
+            }
+        ],
+    }
+    hydration = {"loaderData": {"job": job}}
+    encoded = json.dumps(json.dumps(hydration))
+    html = (
+        "<html><body><div id='root'></div><script>"
+        f"window.__staticRouterHydrationData = JSON.parse({encoded});"
+        "</script></body></html>"
+    )
+
+    posting = extract_posting(
+        html,
+        SearchResult(
+            title="Search result title",
+            company="Apple",
+            url=(
+                "https://jobs.apple.com/en-us/details/200664455/"
+                "lead-forward-deployed-engineer"
+            ),
+        ),
+    )
+
+    assert posting.title == "Lead Forward Deployed Engineer"
+    assert posting.company == "Apple"
+    assert posting.location == "Seattle, Washington, United States"
+    assert posting.employment_type == "Standard"
+    assert posting.date_posted == "2026-05-21T17:41:40.989+00:00"
+    assert posting.base_salary_min_usd == 175_000
+    assert posting.base_salary_max_usd == 263_300
+    assert "production integrations" in posting.description
+
+
+def test_rejects_missing_apple_job_page_as_closed() -> None:
+    with pytest.raises(ClosedJobPostingError, match="page was not found"):
+        extract_posting(
+            "<main><h1>Page not found</h1></main>",
+            SearchResult(
+                title="Old role",
+                company="Apple",
+                url="https://jobs.apple.com/en-us/details/100000000/old-role",
+            ),
+        )
 
 
 def test_rejects_pages_without_required_fields() -> None:

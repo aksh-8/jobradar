@@ -33,6 +33,12 @@ h2 { font-size: 12px; margin: 14px 0 6px; text-transform: uppercase; }
 .chip { background: #e6efe9; border-radius: 999px; color: #174d35; font-size: 11px; padding: 4px 7px; }
 .chip.missing { background: #f7dfdf; color: #8b2929; }
 .actions { display: grid; gap: 7px; margin: 14px 0; }
+.playbook-label { margin-top: 16px; }
+.playbook-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.playbook-actions button { font-size: 11px; padding: 9px 6px; }
+.cover-letter-panel { margin: 10px 0; }
+.cover-letter-panel textarea { border: 1px solid #becdc4; border-radius: 7px; box-sizing: border-box; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; height: 190px; padding: 9px; resize: vertical; width: 100%; }
+.cover-letter-panel button { margin-top: 7px; }
 ul { padding-left: 20px; }
 li { font-size: 13px; margin: 6px 0; }
 .error { border-color: #efc8c8; }

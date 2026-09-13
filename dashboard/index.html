@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review JobRadar scores and manage applications.">
     <title>JobRadar Dashboard</title>
-    <link rel="stylesheet" href="app.css?v=20260824-1">
+    <link rel="stylesheet" href="app.css?v=20260829-1">
   </head>
   <body>
     <header class="site-header">
@@ -117,6 +117,20 @@
             <span id="outreach-resume"></span>
             <span id="outreach-location"></span>
           </div>
+          <div class="playbook-actions" aria-label="Application actions">
+            <a id="playbook-apply" target="_blank" rel="noopener noreferrer">Apply</a>
+            <button data-copy="outreach-recruiter" type="button">Recruiter Message</button>
+            <button data-copy="outreach-referral" type="button">Referral Request</button>
+            <button id="generate-cover-letter" type="button">Cover Letter</button>
+          </div>
+          <section id="cover-letter-section" class="cover-letter-section hidden">
+            <div class="section-heading">
+              <h3>Cover letter</h3>
+              <button id="copy-cover-letter" type="button">Copy</button>
+            </div>
+            <div id="cover-letter-status" class="contact-status" role="status"></div>
+            <textarea id="cover-letter-output" readonly aria-label="Generated cover letter"></textarea>
+          </section>
           <section>
             <h3>Strategy</h3>
             <p id="outreach-strategy"></p>
@@ -155,6 +169,6 @@
         </div>
       </aside>
     </div>
-    <script src="app.js?v=20260824-1"></script>
+    <script src="app.js?v=20260829-1"></script>
   </body>
 </html>

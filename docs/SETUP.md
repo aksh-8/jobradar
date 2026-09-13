@@ -47,12 +47,17 @@ Edit `.env` and configure:
 - `RESUME_PROFILE_PATH=./config/resume_profile.json`.
 - `RESUME_PROFILE_ID=auto` for four-variant selection.
 - Email credentials only if digest delivery will be used.
-- `GREENHOUSE_BOARDS`, `LEVER_BOARDS`, `ASHBY_BOARDS`, and
-  `CUSTOM_CAREER_PAGES` for Track A priority-company monitoring.
-- `SERPAPI_API_KEY` for Track B role/location and priority-employer Google Jobs
-  discovery.
-- `BRAVE_SEARCH_API_KEY` for priority-company career-domain search plus Track C
-  LinkedIn/Indeed/ZipRecruiter and custom-site gap discovery.
+- `GREENHOUSE_BOARDS`, `LEVER_BOARDS`, and `ASHBY_BOARDS` for verified direct
+  ATS monitoring. Validate every slug against its public endpoint before adding
+  it.
+- `CUSTOM_CAREER_PAGES` for official domains used by Apple and rotating
+  priority-company Brave searches. Generic direct polling stays disabled.
+- `BRAVE_SEARCH_API_KEY` for public LinkedIn/Indeed/ZipRecruiter/Workday gaps,
+  broad company-career discovery, Apple, and rotating priority coverage.
+- No SerpAPI key is required. `ENABLE_SERPAPI_DISCOVERY` remains `false` in the
+  free deployment.
+- `COVER_LETTER_MODEL=gemini-3.6-flash` controls on-demand cover letters and uses
+  the existing `GEMINI_API_KEY`; no additional credential is required.
 - `MAX_SCORING_JOBS_PER_RUN` as the shared model-call safety ceiling (start with
   the default 50 and adjust only after observing provider usage).
 - `PRIORITY_COMPANIES`, `FDE_TARGET_COMPANIES`, and
@@ -93,6 +98,12 @@ Edge:
 4. Choose `E:\Workspace\jobradar\extension`.
 
 The extension requests access only to the active tab after you invoke it and to the loopback JobRadar API.
+
+On a MacBook or other Tailscale device, clone or copy the repository, load its
+`extension` directory unpacked, open **Settings** in the popup, and enter the
+private origin shown by `tailscale serve status`, for example
+`https://jobradar-host.example.ts.net`. Approve the exact-host permission. Do
+not include `/dashboard/` in the API URL.
 
 ## 6. Start JobRadar
 

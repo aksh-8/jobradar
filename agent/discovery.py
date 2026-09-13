@@ -278,7 +278,7 @@ class DiscoveryAgent:
                         url=search_result.url,
                         posting=posting,
                         score=score,
-                        outreach=build_outreach(posting, score),
+                        outreach=build_outreach(posting, score, resume),
                     )
                 )
             if searched >= limit:
@@ -402,7 +402,7 @@ async def run_discovery(
     if audit_errors:
         report = report.model_copy(update={"errors": report.errors + audit_errors})
     return await _compile_and_optionally_deliver(
-        report, send_email=send_email, email_sender=email_sender
+        report, catalog=catalog, send_email=send_email, email_sender=email_sender
     )
 
 
@@ -437,7 +437,7 @@ async def run_scheduled_discovery(
     if not configured_tracks:
         orchestration_errors.append(
             "No discovery tracks are configured. Add at least one ATS/career source "
-            "or a real SERPAPI_API_KEY/BRAVE_SEARCH_API_KEY."
+            "or a real BRAVE_SEARCH_API_KEY."
         )
         failed_tracks.append("configuration")
 
@@ -496,13 +496,14 @@ async def run_scheduled_discovery(
         failed_tracks=tuple(failed_tracks),
     )
     return await _compile_and_optionally_deliver(
-        report, send_email=send_email, email_sender=email_sender
+        report, catalog=catalog, send_email=send_email, email_sender=email_sender
     )
 
 
 async def _compile_and_optionally_deliver(
     report: DiscoveryReport,
     *,
+    catalog: ResumeCatalog,
     send_email: bool,
     email_sender: EmailSender | None,
 ) -> tuple[DiscoveryReport, Digest]:
@@ -519,7 +520,11 @@ async def _compile_and_optionally_deliver(
                 url=job.url,
                 posting=job.posting,
                 score=job.score,
-                outreach=build_outreach(job.posting, job.score),
+                outreach=build_outreach(
+                    job.posting,
+                    job.score,
+                    _resume_for_score(catalog, job.score.resume_profile_id),
+                ),
             )
             for job in pending
         )
@@ -548,6 +553,18 @@ async def _compile_and_optionally_deliver(
             }
         )
     return report, digest
+
+
+def _resume_for_score(
+    catalog: ResumeCatalog,
+    profile_id: str | None,
+) -> ResumeProfile | None:
+    if not profile_id:
+        return None
+    try:
+        return catalog.get(profile_id)
+    except LookupError:
+        return None
 
 
 def _combine_reports(

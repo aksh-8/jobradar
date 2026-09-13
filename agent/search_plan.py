@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import date
 
 from agent.search_providers import (
     AshbyBoardProvider,
@@ -40,11 +41,17 @@ DEFAULT_PRIORITY_COMPANIES = (
     "NVIDIA",
     "Tesla",
 )
-DEFAULT_FDE_COMPANIES = ("Glean", "Cohere", "Scale AI")
 GAP_SOURCE_CLAUSE = (
     "(site:linkedin.com/jobs/view OR site:indeed.com/viewjob OR "
     "site:ziprecruiter.com/jobs OR site:myworkdayjobs.com OR "
-    "site:jobs.smartrecruiters.com)"
+    "site:jobs.smartrecruiters.com OR careers)"
+)
+COMBINED_ROLE_CLAUSE = (
+    '("senior software engineer" OR "staff software engineer" OR '
+    '"platform engineer" OR "infrastructure engineer" OR '
+    '"developer experience engineer" OR SDET OR "quality automation engineer" OR '
+    '"AI automation engineer" OR "applied AI engineer" OR '
+    '"forward deployed engineer")'
 )
 
 
@@ -69,19 +76,17 @@ def google_jobs_queries() -> tuple[str, ...]:
     )
 
 
-def brave_gap_queries(
-    *,
-    fde_companies: tuple[str, ...] | None = None,
-) -> tuple[str, ...]:
-    """Build source-gap searches, explicitly including LinkedIn."""
+def brave_gap_queries() -> tuple[str, ...]:
+    """Build seven broad US searches for Brave's twice-daily gap track."""
 
-    fde = fde_companies or configured_values(
-        "FDE_TARGET_COMPANIES", DEFAULT_FDE_COMPANIES
+    nationwide = tuple(
+        f'{role} jobs "United States" {GAP_SOURCE_CLAUSE}'
+        for role in ROLE_FAMILIES
     )
-    fde_clause = " OR ".join(f'"{company}"' for company in fde)
-    queries = [f"{role} {GAP_SOURCE_CLAUSE}" for role in ROLE_FAMILIES]
-    queries.append(f'{ROLE_FAMILIES[-1]} ({fde_clause}) careers')
-    return tuple(queries)
+    return nationwide + (
+        f'{COMBINED_ROLE_CLAUSE} jobs ("Los Angeles" OR "Greater Los Angeles")',
+        f'{COMBINED_ROLE_CLAUSE} jobs (remote "United States" OR "US remote")',
+    )
 
 
 def configured_discovery_tracks(*, result_limit: int = 60) -> tuple[DiscoveryTrack, ...]:
@@ -125,7 +130,7 @@ def configured_discovery_tracks(*, result_limit: int = 60) -> tuple[DiscoveryTra
                 max(result_limit, 100) * len(ashby),
             )
         )
-    if career_pages:
+    if career_pages and _enabled("ENABLE_CUSTOM_CAREER_POLLING"):
         tracks.append(
             DiscoveryTrack(
                 "priority_custom_careers", 2,
@@ -134,18 +139,10 @@ def configured_discovery_tracks(*, result_limit: int = 60) -> tuple[DiscoveryTra
             )
         )
 
-    if priority_pages and _real_key(os.getenv("BRAVE_SEARCH_API_KEY")):
-        tracks.append(
-            DiscoveryTrack(
-                "priority_company_search",
-                4,
-                PriorityCompanySearchProvider(priority_pages),
-                tuple(priority_pages),
-                max(result_limit, 10 * len(priority_pages)),
-            )
-        )
-
-    if _real_key(os.getenv("SERPAPI_API_KEY")):
+    if (
+        _enabled("ENABLE_SERPAPI_DISCOVERY")
+        and _real_key(os.getenv("SERPAPI_API_KEY"))
+    ):
         priority_companies = tuple(
             company
             for company in configured_values(
@@ -175,7 +172,55 @@ def configured_discovery_tracks(*, result_limit: int = 60) -> tuple[DiscoveryTra
                 "brave_gaps", 12, BraveSearchProvider(), brave_gap_queries(), result_limit,
             )
         )
+        apple_pages = {
+            url: company
+            for url, company in priority_pages.items()
+            if company.casefold() == "apple"
+        }
+        if apple_pages:
+            tracks.append(
+                DiscoveryTrack(
+                    "apple_careers_search",
+                    12,
+                    PriorityCompanySearchProvider(apple_pages),
+                    tuple(apple_pages),
+                    10,
+                )
+            )
+        rotating_pages = rotating_priority_page(priority_pages)
+        if rotating_pages:
+            tracks.append(
+                DiscoveryTrack(
+                    "rotating_priority_search",
+                    12,
+                    PriorityCompanySearchProvider(rotating_pages),
+                    tuple(rotating_pages),
+                    10,
+                )
+            )
     return tuple(tracks)
+
+
+def rotating_priority_page(
+    pages: dict[str, str], *, on_date: date | None = None
+) -> dict[str, str]:
+    """Choose one non-Apple priority career domain, stable for a calendar day."""
+
+    configured_order = configured_values(
+        "PRIORITY_COMPANIES", DEFAULT_PRIORITY_COMPANIES
+    )
+    by_company = {
+        company.casefold(): (url, company) for url, company in pages.items()
+    }
+    candidates = [
+        by_company[company.casefold()]
+        for company in configured_order
+        if company.casefold() != "apple" and company.casefold() in by_company
+    ]
+    if not candidates:
+        return {}
+    selected = candidates[(on_date or date.today()).toordinal() % len(candidates)]
+    return {selected[0]: selected[1]}
 
 
 def configured_values(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
@@ -203,3 +248,7 @@ def configured_mapping(name: str, *, reverse: bool = False) -> dict[str, str]:
 
 def _real_key(value: str | None) -> bool:
     return bool(value and not value.startswith("replace_with_"))
+
+
+def _enabled(name: str) -> bool:
+    return os.getenv(name, "false").strip().casefold() in {"1", "true", "yes", "on"}

@@ -11,10 +11,11 @@ This audit compares the current repository with the original JobRadar specificat
   the specified five dimensions and weights, and an application-owned neutral
   compensation score when salary data is absent.
 - Chrome/Edge Manifest V3 extension that extracts, scores, displays the decision evidence, logs applications, skips roles, and drafts outreach.
-- Three-track discovery with public Greenhouse/Lever/Ashby feeds, custom career
-  pages, SerpAPI Google Jobs pagination, Brave gaps including LinkedIn/Indeed/
-  ZipRecruiter, canonical posting extraction, layered cross-source identity,
-  changed-posting rescoring, and SQLite persistence.
+- Free-source discovery with verified public Greenhouse/Lever/Ashby feeds,
+  bounded Brave gaps including LinkedIn/Indeed/ZipRecruiter/Workday, fixed Apple
+  official-domain coverage, rotating priority-company coverage, canonical
+  posting extraction, layered cross-source identity, changed-posting rescoring,
+  and SQLite persistence.
 - Compiled text/HTML digest with resume selection, sponsorship, salary, outreach strategy, recruiter/referral/cold-email drafts, missing requirements, weekly skill gaps, and follow-up reminders.
 - Gmail SMTP and SendGrid delivery guarded by the explicit `--send-email` or `-SendEmail` option.
 - Pending-delivery tracking: roles are marked delivered only after the email provider succeeds.
@@ -35,8 +36,8 @@ This audit compares the current repository with the original JobRadar specificat
 
 ## Real-world readiness gates
 
-- Add a real SerpAPI key for Google Jobs Track B and a real Brave Search key for
-  gap-discovery Track C. Track A public ATS monitoring needs neither key.
+- Add a real Brave Search key for bounded gap and priority-domain discovery.
+  Direct ATS monitoring needs no search key; SerpAPI is not required.
 - Add Gemini credentials for the supported `google-genai` adapter or verify the
   configured Ollama model.
 - Add Gmail app-password or SendGrid credentials and complete one explicit email test.

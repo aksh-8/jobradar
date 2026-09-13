@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
+from backend.candidate_evidence import fallback_candidate_skills
 from backend.red_flag_scanner import JobPostingFacts
+from backend.resume_store import ResumeProfile
 from backend.scoring_engine import ScoreVerdict, ScoringResult
 
 
@@ -22,43 +24,53 @@ class OutreachGuidance(BaseModel):
 
 
 def build_outreach(
-    posting: JobPostingFacts, result: ScoringResult
+    posting: JobPostingFacts,
+    result: ScoringResult,
+    resume: ResumeProfile | None = None,
 ) -> OutreachGuidance:
-    matched = tuple(result.matched_requirements[:3])
-    talking_points = matched or tuple(result.rationale[:2])
+    matched = tuple(result.skills_matched[:3]) or fallback_candidate_skills(resume)
+    talking_points = matched
     questions = tuple(
         f"Could you share how important {requirement} is in the first six months?"
         for requirement in result.missing_requirements[:2]
     )
     if result.verdict is ScoreVerdict.MANUAL_REVIEW:
         questions += ("Is employment visa sponsorship available for this position?",)
-    evidence = matched[0] if matched else "platform and automation engineering"
+    evidence = _joined_skills(matched)
+    pitch = f"My background in {evidence} maps directly to this role."
     strategy = "Apply now on the careers page and pursue a referral simultaneously."
     return OutreachGuidance(
         subject=f"Interest in {posting.title} at {posting.company}",
         strategy=strategy,
         opening=(
-            f"I am interested in the {posting.title} opportunity at "
-            f"{posting.company} and would value a brief conversation."
+            f"I applied for the {posting.title} role at {posting.company}."
         ),
         recruiter_message=(
             f"Hi - I applied for the {posting.title} role at {posting.company}. "
-            f"My recent work includes {evidence}, production automation, and "
-            "end-to-end platform delivery. The role looks closely aligned. "
-            "Could you point me to the recruiter or hiring manager responsible?"
+            f"{pitch} "
+            "Could you confirm that my application reached the right recruiting team?"
         ),
         referral_message=(
-            f"Hi - I just applied for the {posting.title} role at {posting.company}. "
-            f"My background in {evidence} and platform automation appears relevant. "
-            "If you think the fit is credible after reviewing the posting, would "
-            "you be comfortable referring me or sharing the hiring team's context?"
+            f"Hi - I applied for the {posting.title} role at {posting.company}. "
+            f"{pitch} "
+            "After reviewing the posting, would you be comfortable referring me "
+            "if the fit looks credible?"
         ),
         cold_email=(
-            f"I applied for the {posting.title} role at {posting.company}. My work "
-            f"in {evidence}, backend systems, and automation maps directly to the "
-            "role. I would welcome a short conversation about the team's current "
-            "priorities and where this background could contribute immediately."
+            f"I came across the {posting.title} role at {posting.company} and applied. "
+            f"{pitch} "
+            "The work looks closely aligned with how I build and ship systems. "
+            "Would you be open to a short conversation about the team's priorities?"
         ),
         talking_points=talking_points,
         questions=questions,
     )
+
+
+def _joined_skills(skills: tuple[str, ...]) -> str:
+    selected = skills[:3]
+    if len(selected) == 1:
+        return selected[0]
+    if len(selected) == 2:
+        return f"{selected[0]} and {selected[1]}"
+    return f"{selected[0]}, {selected[1]}, and {selected[2]}"

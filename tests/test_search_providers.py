@@ -15,6 +15,7 @@ from agent.search_providers import (
     SearchProviderError,
     SerpApiGoogleJobsProvider,
     SerpApiSearchProvider,
+    _google_jobs_result,
     _us_location_relevant,
 )
 
@@ -156,7 +157,7 @@ async def test_google_jobs_paginates_and_prefers_canonical_apply_url() -> None:
     results = await provider.search("platform jobs", limit=2)
 
     assert calls == 2
-    assert results[0].url == "https://careers.acme.test/jobs/1"
+    assert results[0].url == "https://jobs.lever.co/acme/1"
     assert results[0].source_job_id == "google-1"
     assert results[0].description == "Build a reliable cloud platform in Python."
     assert results[0].canonical_content is True
@@ -183,6 +184,10 @@ async def test_priority_company_search_scopes_query_and_attaches_company() -> No
                     title="Retail Store Leader",
                     url="https://jobs.apple.com/en-us/details/43/store-leader",
                 ),
+                SearchResult(
+                    title="Senior Platform Engineer",
+                    url="https://third-party.example/apple-platform-engineer",
+                ),
             )
 
     search = StubPublicSearch()
@@ -199,6 +204,25 @@ async def test_priority_company_search_scopes_query_and_attaches_company() -> No
     assert len(results) == 1
     assert results[0].company == "Apple"
     assert results[0].source == "Apple careers search"
+
+
+def test_google_jobs_prefers_canonical_apple_url_over_company_labeled_aggregator() -> None:
+    result = _google_jobs_result({
+        "title": "Platform Engineer",
+        "company_name": "Apple",
+        "apply_options": [
+            {
+                "title": "Apple",
+                "link": "https://indeed.com/viewjob?jk=apple-1",
+            },
+            {
+                "title": "Company site",
+                "link": "https://jobs.apple.com/en-us/details/200/platform-engineer",
+            },
+        ],
+    })
+
+    assert result.url == "https://jobs.apple.com/en-us/details/200/platform-engineer"
 
 
 @pytest.mark.asyncio

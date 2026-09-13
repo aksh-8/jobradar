@@ -17,6 +17,7 @@ from typing import Any, Protocol
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from backend.candidate_evidence import candidate_skills_for_job
 from backend.red_flag_scanner import (
     JobPostingFacts,
     RedFlag,
@@ -106,6 +107,7 @@ class ScoringResult(ScoringModel):
     base_salary_max_usd: int | None = Field(default=None, ge=0)
     provider: str | None = None
     dimensions: ScoreDimensions | None = None
+    skills_matched: tuple[str, ...] = ()
     matched_requirements: tuple[str, ...] = ()
     missing_requirements: tuple[str, ...] = ()
     rationale: tuple[str, ...] = ()
@@ -331,6 +333,7 @@ class ScoringEngine:
             base_salary_max_usd=posting.base_salary_max_usd,
             provider=provider_name,
             dimensions=assessment.dimensions,
+            skills_matched=candidate_skills_for_job(posting, resume),
             matched_requirements=assessment.matched_requirements,
             missing_requirements=assessment.missing_requirements,
             rationale=assessment.rationale,

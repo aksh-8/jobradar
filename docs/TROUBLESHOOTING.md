@@ -48,9 +48,25 @@ posting is reported without freezing the scheduler.
 ## Extension reports an API error
 
 - Open `/health` directly.
-- Confirm the extension API setting is `http://127.0.0.1:8000` or `http://localhost:8000`.
+- Confirm the extension API setting is loopback HTTP on the host PC, or the
+  private Tailscale HTTPS origin on another device. Do not include `/dashboard/`.
 - Restart Uvicorn after `.env` or resume-profile changes.
 - A `409` response means the selected profile is still a draft.
+
+On Apple Careers, the console may report that
+`apple.com/search-services/suggestions/defaultlinks` was blocked by CORS. That
+request belongs to Apple's global navigation and does not indicate a JobRadar
+failure. Judge the extension by whether its popup returns a score.
+
+## Cover letter generation fails
+
+- Confirm `GEMINI_API_KEY` is configured and that `COVER_LETTER_MODEL` names a
+  model available to the account. By default it uses `gemini-3.6-flash`, matching
+  this deployment's scoring model.
+- A 503 can mean Gemini twice returned text violating the no-header,
+  no-sentence-starting-with-`I`, or four-sentences-per-paragraph policy.
+- Cover letters are generated on demand and not cached; retrying consumes a new
+  Gemini request.
 
 ## Discovery returns no opportunities
 
@@ -59,22 +75,24 @@ Check the printed summary separately for duplicates, extraction failures, hard r
 Verify `JOB_SEARCH_PROVIDER`, its API key, and the pipe-separated `JOB_SEARCH_QUERIES`. Search APIs return result metadata; JobRadar still needs access to each linked job page.
 
 For scheduled discovery, inspect the `tracks_run`, `failed_tracks`, and
-`deferred` fields in console output. Track A direct public ATS feeds can operate
-without a search API key. Track B requires SerpAPI; Track C requires Brave. A
+`deferred` fields in console output. Direct public ATS feeds can operate
+without a search API key. Scheduled broad/Apple/rotating discovery requires
+Brave; SerpAPI is disabled and not required. A
 nonzero `deferred` count means the `MAX_SCORING_JOBS_PER_RUN` safety ceiling was
 reached, not that those roles were rejected.
 
 For missing Apple, Google, Microsoft, Amazon, Meta, NVIDIA, or Tesla results,
 run `.\.venv\Scripts\python.exe -m scripts.check_priority_sources`. Confirm
 that every priority employer also has a matching `CUSTOM_CAREER_PAGES` entry.
-The priority search does not require location keywords; every result still must
-pass the downstream USA-only extraction policy.
+The Apple search is always scoped to `jobs.apple.com`; one other priority domain
+rotates daily. These searches do not require location keywords, and every result
+must still pass the downstream USA-only extraction policy.
 
 The dashboard header reads `logs/last_run_status.txt`. **Discovery failed**
 means the last scheduled command exited nonzero; inspect
 `logs/errors_in_last_run.txt` and the current dated log before considering API
-quota. A third-party job page returning 401/403/429 is not the same as Brave or
-SerpAPI rejecting the search request.
+quota. A third-party job page returning 401/403/429 is not the same as Brave
+rejecting the search request.
 
 JobRadar is intentionally US-only. A posting is excluded when its normalized
 location and description do not verify United States eligibility. `Remote` by

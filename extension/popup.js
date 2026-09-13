@@ -33,9 +33,11 @@ function renderResult(result) {
     item.textContent = reason;
     return item;
   }));
-  renderChips("matched", result.matched_requirements || [], false);
+  renderChips("matched", result.skills_matched || [], false);
   renderChips("missing", result.missing_requirements || [], true);
   document.getElementById("action-status").textContent = "";
+  document.getElementById("cover-letter-panel").classList.add("hidden");
+  document.getElementById("cover-letter-output").value = "";
   for (const id of ["apply", "skip"]) {
     document.getElementById(id).disabled = !result.job_id;
   }
@@ -86,15 +88,45 @@ async function updateLifecycle(status) {
     : response?.error || "Could not update this job.";
 }
 
-async function draftOutreach() {
-  if (!lastResult?.posting) return;
-  const evidence = lastResult.matched_requirements?.[0] || "platform and automation engineering";
-  const message = `Hi - I applied for the ${lastResult.posting.title} role at ${lastResult.posting.company}. My recent work includes ${evidence}, production automation, and end-to-end platform delivery. The role looks closely aligned. Could you point me to the recruiter or hiring manager responsible?`;
+async function copyOutreach(kind) {
+  if (!lastResult?.job_id) return;
   try {
+    const response = await chrome.runtime.sendMessage({
+      type: "JOBRADAR_GET_OUTREACH",
+      jobId: lastResult.job_id,
+    });
+    if (!response?.ok) throw new Error(response?.error || "Could not load outreach.");
+    const message = response.data[kind];
     await navigator.clipboard.writeText(message);
-    document.getElementById("action-status").textContent = "Recruiter message copied.";
-  } catch (_error) {
-    document.getElementById("action-status").textContent = message;
+    document.getElementById("action-status").textContent = kind === "recruiter_message"
+      ? "Recruiter message copied."
+      : "Referral request copied.";
+  } catch (error) {
+    document.getElementById("action-status").textContent = error.message;
+  }
+}
+
+async function generateCoverLetter() {
+  if (!lastResult?.posting) return;
+  const button = document.getElementById("cover-letter");
+  button.disabled = true;
+  button.textContent = "Writing...";
+  document.getElementById("action-status").textContent = "Writing with Gemini...";
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "JOBRADAR_COVER_LETTER",
+      result: lastResult,
+    });
+    if (!response?.ok) throw new Error(response?.error || "Could not generate cover letter.");
+    document.getElementById("cover-letter-output").value = response.data;
+    document.getElementById("cover-letter-panel").classList.remove("hidden");
+    document.getElementById("action-status").textContent = "Cover letter ready.";
+    button.textContent = "Regenerate";
+  } catch (error) {
+    document.getElementById("action-status").textContent = error.message;
+    button.textContent = "Try again";
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -121,18 +153,34 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
-  const apiBaseUrl = document.getElementById("api-url").value.trim();
+  const rawApiBaseUrl = document.getElementById("api-url").value.trim();
   const profileId = document.getElementById("profile-id").value.trim();
   const status = document.getElementById("save-status");
-  if (!/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(apiBaseUrl) || !profileId) {
-    status.textContent = "Use a loopback HTTP URL and a profile ID.";
+  let apiBaseUrl;
+  try {
+    apiBaseUrl = JobRadarSettings.normalizeApiBaseUrl(rawApiBaseUrl);
+  } catch (error) {
+    status.textContent = error.message;
     return;
+  }
+  if (!profileId) {
+    status.textContent = "Enter a profile ID.";
+    return;
+  }
+  const origin = JobRadarSettings.optionalOrigin(apiBaseUrl);
+  if (origin) {
+    const granted = await chrome.permissions.request({ origins: [origin] });
+    if (!granted) {
+      status.textContent = "Tailscale API access was not granted.";
+      return;
+    }
   }
   const response = await chrome.runtime.sendMessage({
     type: "JOBRADAR_SAVE_SETTINGS",
     apiBaseUrl,
     profileId,
   });
+  document.getElementById("api-url").value = apiBaseUrl;
   status.textContent = response?.ok ? "Saved." : response?.error || "Could not save settings.";
 }
 
@@ -142,5 +190,13 @@ document.getElementById("retry").addEventListener("click", score);
 document.getElementById("save").addEventListener("click", saveSettings);
 document.getElementById("apply").addEventListener("click", () => updateLifecycle("APPLIED"));
 document.getElementById("skip").addEventListener("click", () => updateLifecycle("SKIPPED"));
-document.getElementById("outreach").addEventListener("click", draftOutreach);
+document.getElementById("recruiter").addEventListener("click", () => copyOutreach("recruiter_message"));
+document.getElementById("referral").addEventListener("click", () => copyOutreach("referral_request"));
+document.getElementById("cover-letter").addEventListener("click", generateCoverLetter);
+document.getElementById("copy-cover-letter").addEventListener("click", async () => {
+  const output = document.getElementById("cover-letter-output");
+  if (!output.value) return;
+  await navigator.clipboard.writeText(output.value);
+  document.getElementById("action-status").textContent = "Cover letter copied.";
+});
 loadSettings();

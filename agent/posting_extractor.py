@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Iterable
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -89,11 +91,19 @@ class PostingExtractor:
 
 def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
     soup = BeautifulSoup(html, "html.parser")
-    structured = next(_job_postings(soup), {})
+    page_text = soup.get_text(" ")
+    apple_posting = _apple_job_posting(html, result)
+    if _is_apple_job_url(result.url) and not apple_posting and re.search(
+        r"\b(?:page|job|role) not found\b", page_text, re.IGNORECASE
+    ):
+        raise ClosedJobPostingError(
+            f"{result.url} is closed: Apple Careers reports the page was not found."
+        )
+    structured = apple_posting or next(_job_postings(soup), {})
     valid_through = _text(structured.get("validThrough")) or None
     if reason := closure_reason(
         valid_through=valid_through,
-        page_text=soup.get_text(" "),
+        page_text=page_text,
     ):
         raise ClosedJobPostingError(f"{result.url} is closed: {reason}")
     title = (
@@ -169,6 +179,154 @@ def extract_posting(html: str, result: SearchResult) -> JobPostingFacts:
         sponsorship_status=_sponsorship(searchable),
         **salary,
     )
+
+
+def _is_apple_job_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").casefold()
+    return host == "jobs.apple.com" or host.endswith(".jobs.apple.com")
+
+
+def _apple_job_posting(html: str, result: SearchResult) -> dict[str, object]:
+    """Convert Apple's embedded router payload into JobPosting JSON-LD shape."""
+
+    if not _is_apple_job_url(result.url):
+        return {}
+    match = re.search(
+        r"window\.__staticRouterHydrationData\s*=\s*JSON\.parse\("
+        r"(?P<encoded>\"(?:\\.|[^\"\\])*\")\)",
+        html,
+    )
+    if not match:
+        return {}
+    try:
+        payload = json.loads(json.loads(match.group("encoded")))
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+    requested_job_number = ""
+    if url_match := re.search(r"/details/(\d+)(?:/|$)", result.url):
+        requested_job_number = url_match.group(1)
+    job = _find_apple_job(payload, requested_job_number)
+    if not job:
+        return {}
+
+    localized_posting = _apple_localized_posting(job)
+    description_parts: list[str] = []
+    for key in (
+        "jobSummary",
+        "description",
+        "responsibilities",
+        "minimumQualifications",
+        "preferredQualifications",
+    ):
+        value = _html_text(localized_posting.get(key) or job.get(key))
+        if value and value not in description_parts:
+            description_parts.append(value)
+
+    structured: dict[str, object] = {
+        "@type": "JobPosting",
+        "title": _text(
+            localized_posting.get("postingTitle") or job.get("postingTitle")
+        ),
+        "hiringOrganization": {"name": "Apple"},
+        "description": "\n\n".join(description_parts),
+        "employmentType": job.get("employmentType"),
+        "datePosted": job.get("postDateInGMT") or job.get("postingDate"),
+    }
+    if job.get("homeOffice"):
+        structured["jobLocationType"] = "TELECOMMUTE"
+    if locations := _apple_locations(job.get("localeLocation")):
+        structured["jobLocation"] = locations
+    if salary := _apple_salary(job.get("postingFooters")):
+        structured["baseSalary"] = salary
+    return structured
+
+
+def _find_apple_job(payload: object, requested_job_number: str) -> dict[str, object]:
+    fallback: dict[str, object] = {}
+    queue = [payload]
+    while queue:
+        item = queue.pop(0)
+        if isinstance(item, list):
+            queue.extend(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        job_number = _text(item.get("jobNumber") or item.get("positionId"))
+        if job_number and item.get("localizations"):
+            if requested_job_number and job_number == requested_job_number:
+                return item
+            if not fallback:
+                fallback = item
+        queue.extend(item.values())
+    return fallback if not requested_job_number else {}
+
+
+def _apple_localized_posting(job: dict[str, object]) -> dict[str, object]:
+    localizations = job.get("localizations")
+    if not isinstance(localizations, dict):
+        return {}
+    preferred_locales = (job.get("selectedLocale"), "en_US", "en-US")
+    for locale in preferred_locales:
+        localized = localizations.get(locale) if isinstance(locale, str) else None
+        if isinstance(localized, dict) and isinstance(localized.get("posting"), dict):
+            return localized["posting"]
+    for localized in localizations.values():
+        if isinstance(localized, dict) and isinstance(localized.get("posting"), dict):
+            return localized["posting"]
+    return {}
+
+
+def _apple_locations(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    locations: list[dict[str, object]] = []
+    for item in value:
+        if not isinstance(item, dict) or item.get("active") is False:
+            continue
+        address = {
+            "addressLocality": item.get("city") or item.get("name"),
+            "addressRegion": item.get("stateProvince"),
+            "addressCountry": item.get("countryName"),
+        }
+        if any(_text(part) for part in address.values()):
+            locations.append({"address": address})
+    return locations
+
+
+def _apple_salary(value: object) -> dict[str, object]:
+    if not isinstance(value, list):
+        return {}
+    text_parts: list[str] = []
+    for footer in value:
+        if not isinstance(footer, dict):
+            continue
+        localizations = footer.get("localizations")
+        if not isinstance(localizations, dict):
+            continue
+        for entries in localizations.values():
+            entry_list = entries if isinstance(entries, list) else [entries]
+            for entry in entry_list:
+                if isinstance(entry, dict):
+                    text_parts.append(_html_text(entry.get("content")))
+    salary_match = re.search(
+        r"base pay range[^$]{0,100}\$([\d,]+)\s+(?:and|to|[-\u2013])\s+\$([\d,]+)",
+        " ".join(text_parts),
+        re.IGNORECASE,
+    )
+    if not salary_match:
+        return {}
+    minimum, maximum = (
+        int(value.replace(",", "")) for value in salary_match.groups()
+    )
+    return {
+        "currency": "USD",
+        "value": {
+            "minValue": minimum,
+            "maxValue": maximum,
+            "unitText": "YEAR",
+        },
+    }
 
 
 def _job_postings(soup: BeautifulSoup) -> Iterable[dict[str, object]]:

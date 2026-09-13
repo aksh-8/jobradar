@@ -64,6 +64,36 @@ async function updateStatus(jobId, status, skipReason = null) {
   return body;
 }
 
+async function getOutreach(jobId) {
+  const configured = await settings();
+  const response = await fetch(
+    `${configured.apiBaseUrl.replace(/\/$/, "")}/api/jobs/${jobId}/outreach`,
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.detail || `JobRadar API returned HTTP ${response.status}.`);
+  }
+  return body;
+}
+
+async function generateCoverLetter(result) {
+  const configured = await settings();
+  const { posting, page_url: _pageUrl, job_id: _jobId, ...score } = result;
+  const response = await fetch(
+    `${configured.apiBaseUrl.replace(/\/$/, "")}/api/cover-letter`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ posting, score }),
+    },
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || `JobRadar API returned HTTP ${response.status}.`);
+  }
+  return response.text();
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "JOBRADAR_SCORE_ACTIVE_TAB") {
     (async () => {
@@ -86,6 +116,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "JOBRADAR_UPDATE_STATUS") {
     updateStatus(message.jobId, message.status, message.skipReason)
       .then((job) => sendResponse({ ok: true, data: job }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "JOBRADAR_GET_OUTREACH") {
+    getOutreach(message.jobId)
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "JOBRADAR_COVER_LETTER") {
+    generateCoverLetter(message.result)
+      .then((data) => sendResponse({ ok: true, data }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from agent.cover_letter import CoverLetterGenerationError
 from agent.contact_discovery import ContactSuggestion, ContactType
 from agent.posting_extractor import ClosedJobPostingError, PostingExtractionError
 from backend.main import create_app
@@ -61,6 +62,20 @@ class StubContactFinder:
         )
 
 
+class StubCoverLetterGenerator:
+    def __init__(self, result: str | Exception | None = None) -> None:
+        self.calls = []
+        self.result = result or (
+            "Acme builds useful backend systems. This role matches verified work."
+        )
+
+    async def generate(self, posting, score, resume) -> str:
+        self.calls.append((posting, score, resume))
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
 def ready_profile() -> ResumeProfile:
     return ResumeProfile(
         profile_id="backend",
@@ -115,6 +130,7 @@ def make_client(
     profiles: tuple[ResumeProfile, ...] | None = None,
     posting_extractor: StubPostingExtractor | None = None,
     contact_finder: StubContactFinder | None = None,
+    cover_letter_generator: StubCoverLetterGenerator | None = None,
     runtime_log_directory: Path | None = None,
 ) -> TestClient:
     result = provider_result if provider_result is not None else assessment()
@@ -124,6 +140,7 @@ def make_client(
         resume_catalog=ResumeCatalog(profiles or (ready_profile(),)),
         posting_extractor=posting_extractor,
         contact_finder=contact_finder,
+        cover_letter_generator=cover_letter_generator,
         runtime_log_directory=runtime_log_directory,
     )
     return TestClient(app)
@@ -349,7 +366,36 @@ def test_scored_job_outreach_matches_digest_guidance(tmp_path: Path) -> None:
     assert body["company"] == "Acme"
     assert body["location"] == "Los Angeles, CA"
     assert body["strategy"].startswith("Apply now")
-    assert "recruiter or hiring manager" in body["recruiter_message"]
+    assert "backend engineering and Python" in body["recruiter_message"]
+    assert "right recruiting team" in body["recruiter_message"]
+
+
+def test_cover_letter_endpoint_returns_plain_text_for_stored_score(tmp_path: Path) -> None:
+    generator = StubCoverLetterGenerator()
+    with make_client(tmp_path, cover_letter_generator=generator) as client:
+        job_id = client.post(
+            "/api/score", json=score_payload(with_url=True)
+        ).json()["job_id"]
+        response = client.post("/api/cover-letter", json={"job_id": job_id})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.text.startswith("Acme builds")
+    assert generator.calls[0][1].skills_matched == ("backend engineering", "Python")
+
+
+def test_cover_letter_provider_failure_returns_useful_503(tmp_path: Path) -> None:
+    generator = StubCoverLetterGenerator(
+        CoverLetterGenerationError("Gemini model is unavailable.")
+    )
+    with make_client(tmp_path, cover_letter_generator=generator) as client:
+        job_id = client.post(
+            "/api/score", json=score_payload(with_url=True)
+        ).json()["job_id"]
+        response = client.post("/api/cover-letter", json={"job_id": job_id})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Gemini model is unavailable."
 
 
 def test_any_user_selected_job_can_be_deleted(tmp_path: Path) -> None:
@@ -429,6 +475,10 @@ def test_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert ">Delete</button>" in response.text
     assert "deleteJob" in script.text
     assert "findContacts" in script.text
+    assert "Cover Letter" in response.text
+    assert 'fetch("/api/cover-letter"' in script.text
     assert 'fetch("/api/discovery/status")' in script.text
     assert 'classList.toggle("current", isCurrentStatus)' in script.text
     assert 'details(job).verdict === "QUALIFIED"' in script.text
+    assert 'if (job.status === "APPLIED")' in script.text
+    assert 'job.status !== "APPLIED"' in script.text

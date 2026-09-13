@@ -516,6 +516,7 @@ class PriorityCompanySearchProvider:
             )
             for result in results
             if _target_role_title(result.title)
+            and _same_or_subdomain(result.url, host)
         )
 
 
@@ -573,11 +574,15 @@ def _preferred_apply_url(options: list[object], *, company: str | None = None) -
         host = urlsplit(url).netloc.casefold()
         target = url.casefold()
         title_hint = title.casefold()
-        if company and _company_name_matches(company, title):
-            return (0, url)
-        if any(word in title_hint for word in ("company", "employer", "career")):
-            return (1, url)
         if any(marker in target for marker in CANONICAL_JOB_HOST_MARKERS):
+            return (0, url)
+        if (
+            company
+            and _company_name_matches(company, title)
+            and not any(marker in host for marker in AGGREGATOR_HOSTS)
+        ):
+            return (1, url)
+        if any(word in title_hint for word in ("company", "employer", "career")):
             return (1, url)
         if any(marker in host for marker in AGGREGATOR_HOSTS):
             return (3, url)
@@ -593,6 +598,15 @@ def _company_name_matches(configured: str, discovered: str) -> bool:
         configured_name == discovered_name
         or discovered_name.startswith(configured_name + " ")
         or configured_name.startswith(discovered_name + " ")
+    )
+
+
+def _same_or_subdomain(url: str, expected_host: str) -> bool:
+    discovered = urlsplit(url).netloc.casefold().removeprefix("www.")
+    normalized_expected = expected_host.casefold().removeprefix("www.")
+    return bool(
+        discovered == normalized_expected
+        or discovered.endswith("." + normalized_expected)
     )
 
 

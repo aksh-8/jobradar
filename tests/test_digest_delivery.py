@@ -32,7 +32,8 @@ def opportunity() -> DigestOpportunity:
             role_type=82,
             compensation_signal=75,
         ),
-        matched_requirements=("Python",),
+        skills_matched=("Python",),
+        matched_requirements=("At least 2 years of experience",),
         missing_requirements=("Kubernetes",),
         rationale=("Strong fit.",),
     )

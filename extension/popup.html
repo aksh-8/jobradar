@@ -40,11 +40,18 @@
         <h2>Missing skills</h2>
         <div id="missing" class="chips"></div>
         <ul id="rationale"></ul>
-        <div class="actions">
-          <button id="apply" type="button">Log application</button>
-          <button id="outreach" class="secondary" type="button">Draft outreach</button>
-          <button id="skip" class="danger" type="button">Skip</button>
+        <p class="eyebrow playbook-label">APPLICATION PLAYBOOK</p>
+        <div class="actions playbook-actions">
+          <button id="apply" type="button">Apply</button>
+          <button id="recruiter" class="secondary" type="button">Recruiter Message</button>
+          <button id="referral" class="secondary" type="button">Referral Request</button>
+          <button id="cover-letter" type="button">Cover Letter</button>
         </div>
+        <div id="cover-letter-panel" class="cover-letter-panel hidden">
+          <textarea id="cover-letter-output" readonly aria-label="Generated cover letter"></textarea>
+          <button id="copy-cover-letter" class="secondary" type="button">Copy cover letter</button>
+        </div>
+        <button id="skip" class="danger" type="button">Skip</button>
         <p id="action-status" class="muted" aria-live="polite"></p>
         <button id="rescore" class="secondary" type="button">Score again</button>
       </section>
@@ -65,6 +72,7 @@
         <p id="save-status" class="muted" aria-live="polite"></p>
       </details>
     </main>
+    <script src="settings.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
