@@ -21,12 +21,19 @@
     <p id="plan-status" role="status" aria-live="polite">Loading your recent scoring evidence…</p>
     <section id="plan-summary" class="plan-summary hidden" aria-label="Plan overview"></section>
     <section id="action-plan" class="action-plan" aria-label="Ranked monthly activities"></section>
+    <section class="plan-card" id="automatic-shortlist" aria-labelledby="shortlist-title">
+      <p class="eyebrow">JOBRADAR DOES THE FIRST PASS</p>
+      <h2 id="shortlist-title">Your automatic shortlist</h2>
+      <p id="shortlist-status" role="status">Reviewing saved LA and US-remote roles…</p>
+      <div id="shortlist-matches"></div>
+      <details><summary>See reviewed candidates and concerns</summary><div id="shortlist-review"></div></details>
+    </section>
     <details id="evidence-panel" class="evidence-panel hidden">
       <summary>Behind the plan: scores and policy signals</summary>
       <div id="score-evidence"></div>
       <p id="method-note"></p>
     </details>
   </main>
-  <script src="outlook.js?v=1"></script>
+  <script src="outlook.js?v=2"></script>
 </body>
 </html>

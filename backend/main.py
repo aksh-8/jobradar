@@ -41,6 +41,7 @@ from backend.contact_store import (
 from backend.database import LATEST_SCHEMA_VERSION, database_connection, initialize_database
 from backend.job_availability import closure_reason
 from backend.job_store import (
+    purge_rejected_jobs,
     JobStatus,
     StoredJob,
     delete_stored_job,
@@ -270,6 +271,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         await initialize_database(database_path)
+        await purge_rejected_jobs(database_path=database_path)
         application.state.database_path = database_path
         async def maintain_availability():
             from agent.discovery import audit_stored_job_availability
@@ -333,6 +335,11 @@ def _build_routes():
     from fastapi import APIRouter
 
     router = APIRouter()
+
+    @router.get("/api/shortlist")
+    async def shortlist(request: Request):
+        from backend.shortlist import build_shortlist
+        return await build_shortlist(request.app.state.resume_catalog, request.app.state.database_path)
 
     @router.get("/api/outlook/monthly")
     async def outlook(request: Request):
@@ -640,6 +647,9 @@ def _build_routes():
                 url=payload.url,
                 database_path=request.app.state.database_path,
             )
+            if result.verdict.value == 'REJECTED' or result.hard_flags:
+                await purge_rejected_jobs(database_path=request.app.state.database_path)
+                job_id = None
         return ScoreResponse(**result.model_dump(), job_id=job_id)
 
     @router.post("/api/score-url", response_model=ScoreResponse)

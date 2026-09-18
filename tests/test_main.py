@@ -409,10 +409,10 @@ def test_any_user_selected_job_can_be_deleted(tmp_path: Path) -> None:
         rejected_id = client.post("/api/score", json=rejected_payload).json()["job_id"]
         qualified_id = client.post("/api/score", json=qualified_payload).json()["job_id"]
 
-        rejected_response = client.delete(f"/api/jobs/{rejected_id}")
+        assert rejected_id is None
+        assert len(client.get("/api/jobs").json()) == 1
         qualified_response = client.delete(f"/api/jobs/{qualified_id}")
 
-        assert rejected_response.status_code == 204
         assert qualified_response.status_code == 204
         assert client.get("/api/jobs").json() == []
 

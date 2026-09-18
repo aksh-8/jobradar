@@ -2,6 +2,29 @@
 
 ## Discovery preferences and monthly outlook
 
+Deterministic hard-policy rejections are automatically deleted, including their
+events and contact records, after scoring and during startup/availability sweeps.
+Low fit scores and manual sponsorship review alone do not trigger deletion.
+The scoring API still returns rejection reasons but no saved job ID.
+`python -m scripts.clean_dashboard` backs up the configured SQLite database under
+ignored `private/backups`, deletes policy rejections, and checks all visible US
+roles for closure. Confirmed closures are hidden; network/access failures remain
+unverified and are not treated as expired. This does not send emails or score jobs.
+
+**Automatic shortlist** (`/dashboard/outlook.html#automatic-shortlist`) reviews up
+to ten saved LA/US-remote candidates and shows at most five credible matches.
+`GET /api/shortlist` derives this view on demand without paid requests or changing
+application status. Each match has the selected READY resume, verified employment
+duration, score-based explanation, and sponsorship-review warning where applicable.
+Overlapping employment dates are counted once. Numeric experience mentions are
+conservative review signals, not proof of mandatory overall experience: degree
+alternatives, skill-specific years, and nonnumeric requirements need human review.
+Staff/principal titles, 8+ year mentions, unknown history, experience shortfalls,
+and fit/skills/experience scores below 60 do not fill the shortlist. Applied,
+skipped, closed, non-US, and hard-rejected jobs are excluded. No minimum of five
+matches is promised. Discovery also ranks lower-level candidates ahead of Staff
+and 8+ year candidates within each location tier before spending its scoring budget.
+
 Intern/internship (including "intership") title or employment-type labels are
 excluded before scoring, from existing dashboard records, and from future digests.
 Descriptions mentioning mentoring interns do not trigger this rule.

@@ -8,6 +8,7 @@ function element(tag, text, className) {
 }
 
 async function loadPlan() {
+  loadShortlist();
   const status = document.getElementById("plan-status");
   const button = document.getElementById("reload-plan");
   const cards = document.getElementById("action-plan");
@@ -65,3 +66,33 @@ async function loadPlan() {
 }
 document.getElementById("reload-plan").addEventListener("click", loadPlan);
 loadPlan();
+
+async function loadShortlist() {
+  const status = document.getElementById("shortlist-status");
+  const matches = document.getElementById("shortlist-matches");
+  const review = document.getElementById("shortlist-review");
+  matches.replaceChildren();
+  review.replaceChildren();
+  status.textContent = "Reviewing saved LA and US-remote roles…";
+  try {
+    const response = await fetch("/api/shortlist");
+    if (!response.ok) throw new Error("Could not load shortlist. Use Refresh plan to retry.");
+    const data = await response.json();
+    status.textContent = `${data.matches.length} matches from ${data.reviewed.length} reviewed (${data.candidate_count} candidates). ${data.note}`;
+    if (!data.matches.length) matches.append(element("p", "No credible matches yet. See the concerns below; the shortlist updates as discovery finds suitable roles."));
+    for (const job of data.matches) {
+      const card = element("article", "", "deliverable");
+      card.append(element("h3", `${job.company} — ${job.title}`), element("p", job.reason), element("p", `Use resume: ${job.resume}`));
+      const link = element("a", "Open job posting", "open-job");
+      const url = new URL(job.url);
+      if (["https:", "http:"].includes(url.protocol)) link.href = url.href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      card.append(link);
+      matches.append(card);
+    }
+    for (const job of data.reviewed) {
+      review.append(element("p", `${job.company} — ${job.title}: ${job.concerns.join(" ") || job.reason}`));
+    }
+  } catch (error) { status.textContent = error.message; }
+}

@@ -104,10 +104,11 @@ async def test_discovery_filters_persists_and_deduplicates(tmp_path: Path) -> No
     assert first.rejected_results == 1
     assert first.below_threshold_results == 1
     assert provider.calls == 2
-    assert second.duplicate_results == 3
+    assert second.duplicate_results == 2
+    assert second.rejected_results == 1
     jobs = await list_jobs(database_path=database_path)
-    assert len(jobs) == 3
-    assert sum(job.status is JobStatus.SKIPPED for job in jobs) == 2
+    assert len(jobs) == 2
+    assert sum(job.status is JobStatus.SKIPPED for job in jobs) == 1
 
 
 @pytest.mark.asyncio

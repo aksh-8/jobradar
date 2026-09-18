@@ -23,6 +23,7 @@ from agent.posting_extractor import (
 from agent.search_plan import DiscoveryTrack, configured_discovery_tracks
 from agent.search_providers import SearchProvider, SearchResult, create_search_provider
 from backend.job_store import (
+    purge_rejected_jobs,
     JobStatus,
     discovery_track_is_due,
     find_existing_job,
@@ -262,13 +263,7 @@ class DiscoveryAgent:
                 )
                 if score.verdict is ScoreVerdict.REJECTED:
                     rejected += 1
-                    reason = ", ".join(flag.code.value for flag in score.hard_flags)
-                    await update_job_status(
-                        job_id,
-                        JobStatus.SKIPPED,
-                        skip_reason=reason or "Rejected by hard-filter policy",
-                        database_path=self.database_path,
-                    )
+                    await purge_rejected_jobs(database_path=self.database_path)
                     continue
                 if score.verdict is ScoreVerdict.BELOW_THRESHOLD:
                     below += 1
@@ -341,6 +336,7 @@ async def audit_stored_job_availability(
 ) -> tuple[int, tuple[str, ...]]:
     """Refresh a bounded set of valuable stored roles without blocking discovery."""
 
+    await purge_rejected_jobs(database_path=database_path)
     candidates = await list_availability_check_candidates(
         limit=limit,
         minimum_age_hours=minimum_age_hours,

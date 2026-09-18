@@ -31,10 +31,10 @@ def build_action_plan(gaps, examples, averages, scored):
         plan.append(item('experience', 'Aim at the right level today',
             'Repeated experience requirements exceed what the selected resumes demonstrate.',
             'Today', '45–60 minutes', 'Improves application targeting immediately.',
-            ['Review 10 LA or US-remote Software Engineer II, Platform, Automation, or FDE roles.',
-             'Compare each required experience level with your verified work history; save five credible matches.',
-             'Deprioritize Staff and explicit 8+ year roles. Review Senior roles individually.'],
-            'A shortlist of five roles with a one-line explanation of your fit for each.',
+            ['Open Your automatic shortlist on this page: JobRadar reviews up to 10 saved LA or US-remote candidates.',
+             'Review the up-to-five matches, recommended resumes, and individual fit explanations.',
+             'Confirm sponsorship and current availability on the posting, then apply. Applied or skipped roles leave the shortlist automatically.'],
+            'JobRadar supplies the shortlist below; you confirm the posting and choose where to apply.',
             f"{groups['experience']['mentions']} requirement mentions; experience-level average "
             f"{averages.get('experience_level', 0)}/100. Mentions can overlap within one role."))
     plan.append(item('resume-evidence', 'Rewrite three bullets around ownership',

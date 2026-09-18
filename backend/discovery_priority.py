@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import os
 
 from backend.location_policy import us_location_sort_key
+from backend.role_targeting import level_penalty
 
 
 def posting_age_hours(value: str | None) -> float | None:
@@ -30,6 +31,7 @@ def priority_key(result):
     preferred = company in {name.strip().casefold() for name in targets.split("|")}
     return (
         us_location_sort_key(result.location, result.workplace_type, result.snippet)[0],
+        level_penalty(result.title, result.description or result.snippet),
         0 if age is not None and age <= 24 else 1 if age is None else 2,
         0 if preferred else 1,
         age if age is not None else float("inf"),

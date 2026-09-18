@@ -839,6 +839,19 @@ async def delete_stored_job(
         return True
 
 
+async def purge_rejected_jobs(*, database_path=None) -> int:
+    """Delete deterministic rejections, including cascaded events and contacts."""
+    async with database_connection(database_path) as connection:
+        cursor = await connection.execute("""
+            DELETE FROM jobs WHERE CASE WHEN json_valid(score_details) THEN
+                json_extract(score_details, '$.verdict') = 'REJECTED'
+                OR json_array_length(score_details, '$.hard_flags') > 0
+            ELSE 0 END
+        """)
+        await connection.commit()
+        return cursor.rowcount
+
+
 async def update_job_status(
     job_id: int,
     new_status: JobStatus,
