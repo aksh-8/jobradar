@@ -10,7 +10,8 @@ from pydantic import BaseModel, ConfigDict
 
 from agent.outreach import OutreachGuidance
 from backend.job_store import FollowUpReminder
-from backend.red_flag_scanner import JobPostingFacts
+from backend.red_flag_scanner import JobPostingFacts, is_internship
+from backend.location_policy import us_location_sort_key
 from backend.scoring_engine import ScoringResult
 
 
@@ -42,9 +43,11 @@ def build_digest(
     day = run_date or date.today()
     ordered = tuple(
         sorted(
-            opportunities,
+            (item for item in opportunities
+             if not is_internship(item.posting.title, item.posting.employment_type)),
             key=lambda item: (
-                -(item.score.overall_score + _location_boost(item.posting)),
+                us_location_sort_key(item.posting.location, item.posting.workplace_type,
+                                     item.posting.description)[0],
                 -item.score.overall_score,
                 item.job_id,
             ),

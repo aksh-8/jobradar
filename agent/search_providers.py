@@ -88,10 +88,12 @@ class BraveSearchProvider:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout_seconds: float = DEFAULT_SEARCH_TIMEOUT_SECONDS,
+        freshness: str | None = None,
     ) -> None:
         self.api_key = api_key or os.getenv("BRAVE_SEARCH_API_KEY")
         self.transport = transport
         self.timeout_seconds = timeout_seconds
+        self.freshness = freshness
 
     async def search(self, query: str, *, limit: int) -> tuple[SearchResult, ...]:
         _require_key(self.api_key, "BRAVE_SEARCH_API_KEY")
@@ -115,6 +117,7 @@ class BraveSearchProvider:
                             "country": "us",
                             "search_lang": "en",
                             "safesearch": "moderate",
+                            **({"freshness": self.freshness} if self.freshness else {}),
                         },
                     )
                     response.raise_for_status()
@@ -314,7 +317,8 @@ class GreenhouseBoardProvider:
                     company=company,
                     description=_plain_text(row.get("content", "")),
                     location=(row.get("location") or {}).get("name"),
-                    date_posted=row.get("updated_at"),
+                    # updated_at is not the original publication date.
+                    date_posted=row.get("first_published"),
                     canonical_content=True,
                 )
                 for row in rows
@@ -324,7 +328,8 @@ class GreenhouseBoardProvider:
                 and row.get("absolute_url")
                 and row.get("id")
             )
-            return results[:limit]
+            from backend.discovery_priority import priority_key
+            return tuple(sorted(results, key=priority_key)[:limit])
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
             raise SearchProviderError(f"Greenhouse board {query!r} failed: {error}") from error
 
@@ -375,7 +380,8 @@ class LeverBoardProvider:
                 and row.get("hostedUrl")
                 and row.get("id")
             )
-            return results[:limit]
+            from backend.discovery_priority import priority_key
+            return tuple(sorted(results, key=priority_key)[:limit])
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
             raise SearchProviderError(f"Lever board {query!r} failed: {error}") from error
 
@@ -413,7 +419,8 @@ class AshbyBoardProvider:
                 and _us_location_relevant(row.get("location"))
                 and row.get("jobUrl")
             )
-            return results[:limit]
+            from backend.discovery_priority import priority_key
+            return tuple(sorted(results, key=priority_key)[:limit])
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
             raise SearchProviderError(f"Ashby board {query!r} failed: {error}") from error
 
@@ -684,6 +691,9 @@ def _require_key(value: str | None, name: str) -> None:
 
 
 def _target_role_title(title: str) -> bool:
+    from backend.red_flag_scanner import is_internship
+    if is_internship(title):
+        return False
     normalized = " ".join(title.casefold().split())
     patterns = (
         r"\b(?:senior|staff|sr\.?|principal)?\s*software engineer\b",

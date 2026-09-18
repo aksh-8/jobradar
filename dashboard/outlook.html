@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your monthly plan | JobRadar</title>
+  <link rel="stylesheet" href="app.css?v=20260917-2">
+  <link rel="stylesheet" href="outlook.css?v=1">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/dashboard/"><span class="brand-mark">JR</span><span>JobRadar</span></a>
+    <a class="refresh" href="/dashboard/">← Back to jobs</a>
+  </header>
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">YOUR MONTHLY ACTION PLAN</p><h1>Make your next<br>application stronger.</h1>
+      <p class="intro">Five priorities, ordered by how soon you can act.<br>Build evidence. Show it clearly. Target roles that fit.</p></div>
+      <button id="reload-plan" class="refresh" type="button">Refresh plan</button>
+    </section>
+    <p id="plan-status" role="status" aria-live="polite">Loading your recent scoring evidence…</p>
+    <section id="plan-summary" class="plan-summary hidden" aria-label="Plan overview"></section>
+    <section id="action-plan" class="action-plan" aria-label="Ranked monthly activities"></section>
+    <details id="evidence-panel" class="evidence-panel hidden">
+      <summary>Behind the plan: scores and policy signals</summary>
+      <div id="score-evidence"></div>
+      <p id="method-note"></p>
+    </details>
+  </main>
+  <script src="outlook.js?v=1"></script>
+</body>
+</html>

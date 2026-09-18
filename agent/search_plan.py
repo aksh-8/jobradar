@@ -19,7 +19,7 @@ from agent.search_providers import (
 )
 
 ROLE_FAMILIES = (
-    '("senior software engineer" OR "software engineer III" OR "staff software engineer")',
+    '("software engineer II" OR "software engineer III" OR "senior software engineer")',
     '("platform engineer" OR "infrastructure engineer" OR "developer experience engineer")',
     '(SDET OR "software development engineer in test" OR "quality automation engineer")',
     '("AI automation engineer" OR "applied AI engineer")',
@@ -84,7 +84,7 @@ def brave_gap_queries() -> tuple[str, ...]:
         for role in ROLE_FAMILIES
     )
     return nationwide + (
-        f'{COMBINED_ROLE_CLAUSE} jobs ("Los Angeles" OR "Greater Los Angeles")',
+        f'{COMBINED_ROLE_CLAUSE} jobs ("Los Angeles" OR "Culver City" OR "Irvine")',
         f'{COMBINED_ROLE_CLAUSE} jobs (remote "United States" OR "US remote")',
     )
 
@@ -169,7 +169,7 @@ def configured_discovery_tracks(*, result_limit: int = 60) -> tuple[DiscoveryTra
     if _real_key(os.getenv("BRAVE_SEARCH_API_KEY")):
         tracks.append(
             DiscoveryTrack(
-                "brave_gaps", 12, BraveSearchProvider(), brave_gap_queries(), result_limit,
+                "brave_gaps", 12, BraveSearchProvider(freshness="pd"), brave_gap_queries(), result_limit,
             )
         )
         apple_pages = {

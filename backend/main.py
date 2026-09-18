@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import asyncio
+import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -269,7 +271,28 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         await initialize_database(database_path)
         application.state.database_path = database_path
-        yield
+        async def maintain_availability():
+            from agent.discovery import audit_stored_job_availability
+            while True:
+                try:
+                    await audit_stored_job_availability(
+                        application.state.posting_extractor,
+                        limit=int(os.getenv("AVAILABILITY_CHECK_LIMIT", "40")),
+                        minimum_age_hours=2,
+                        database_path=database_path,
+                    )
+                except Exception:
+                    logging.getLogger(__name__).exception("Availability maintenance failed")
+                await asyncio.sleep(900)
+
+        maintenance = (asyncio.create_task(maintain_availability())
+                       if database_path is None and posting_extractor is None else None)
+        try:
+            yield
+        finally:
+            if maintenance:
+                maintenance.cancel()
+                await asyncio.gather(maintenance, return_exceptions=True)
 
     application = FastAPI(
         title="JobRadar API",
@@ -310,6 +333,11 @@ def _build_routes():
     from fastapi import APIRouter
 
     router = APIRouter()
+
+    @router.get("/api/outlook/monthly")
+    async def outlook(request: Request):
+        from backend.monthly_outlook import monthly_outlook
+        return await monthly_outlook(request.app.state.database_path)
 
     @router.get("/health", response_model=HealthResponse)
     async def health(request: Request) -> HealthResponse:

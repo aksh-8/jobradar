@@ -10,6 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import hashlib
+import logging
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import Any, Protocol
@@ -156,11 +159,16 @@ class GeminiScoringProvider:
             else DEFAULT_REQUEST_TIMEOUT_SECONDS
         )
         self._generate = generate
+        self._assessment_cache: OrderedDict[str, ProviderAssessment] = OrderedDict()
 
     async def score(
         self, posting: JobPostingFacts, resume: ResumeProfile
     ) -> ProviderAssessment:
         prompt = _build_prompt(posting, resume)
+        cache_key = hashlib.sha256((self.model + prompt).encode()).hexdigest()
+        if cache_key in self._assessment_cache:
+            self._assessment_cache.move_to_end(cache_key)
+            return self._assessment_cache[cache_key]
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 raw = (
@@ -168,7 +176,11 @@ class GeminiScoringProvider:
                     if self._generate is not None
                     else await self._generate_with_sdk(prompt)
                 )
-            return _parse_assessment(raw)
+            assessment = _parse_assessment(raw)
+            self._assessment_cache[cache_key] = assessment
+            if len(self._assessment_cache) > 256:
+                self._assessment_cache.popitem(last=False)
+            return assessment
         except ScoringProviderError:
             raise
         except (
@@ -201,6 +213,15 @@ class GeminiScoringProvider:
                     response_json_schema=ProviderAssessment.model_json_schema(),
                     temperature=0,
                 ),
+            )
+        usage = getattr(response, "usage_metadata", None)
+        if usage:
+            logging.getLogger("uvicorn.error").info(
+                "Gemini scoring model=%s input=%s output=%s thinking=%s cached=%s",
+                self.model, getattr(usage, "prompt_token_count", None),
+                getattr(usage, "candidates_token_count", None),
+                getattr(usage, "thoughts_token_count", None),
+                getattr(usage, "cached_content_token_count", None),
             )
         text = getattr(response, "text", None)
         if not text:
@@ -373,8 +394,8 @@ def create_default_scoring_engine() -> ScoringEngine:
 
 def _build_prompt(posting: JobPostingFacts, resume: ResumeProfile) -> str:
     payload: dict[str, Any] = {
-        "job": posting.model_dump(mode="json"),
         "resume": resume.scoring_context(),
+        "job": posting.model_dump(mode="json", exclude_none=True),
     }
     return (
         "Score this job against only the verified resume facts supplied. "
@@ -387,7 +408,7 @@ def _build_prompt(posting: JobPostingFacts, resume: ResumeProfile) -> str:
         "minimum and preference. When no salary range is supplied, return the "
         f"neutral compensation score {NEUTRAL_COMPENSATION_SCORE}; application code "
         "also enforces this default. Keep rationale concise and return JSON only.\n"
-        f"Input:\n{json.dumps(payload, sort_keys=True)}"
+        f"Input:\n{json.dumps(payload, separators=(',', ':'), ensure_ascii=False)}"
     )
 
 

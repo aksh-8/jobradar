@@ -11,6 +11,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 DEFAULT_MINIMUM_BASE_SALARY_USD = 140_000
 DEFAULT_MINIMUM_COMPANY_SIZE = 50
+
+
+def is_internship(title: str, employment_type: str | None = None) -> bool:
+    """Match role labels, never incidental mentions of mentoring interns."""
+    return bool(re.search(
+        r"\b(?:interns?|internships?|interships?)\b",
+        f"{title} {employment_type or ''}", re.IGNORECASE,
+    ))
 DEFAULT_KNOWN_SPONSOR_COMPANIES = ("Apple", "Google", "Microsoft", "Amazon", "Meta")
 
 
@@ -33,6 +41,7 @@ class RedFlagCode(str, Enum):
     """Stable identifiers consumed by scoring and API layers."""
 
     NO_SPONSORSHIP = "NO_SPONSORSHIP"
+    INTERNSHIP = "INTERNSHIP"
     ITAR_RESTRICTED = "ITAR_RESTRICTED"
     SECURITY_CLEARANCE = "SECURITY_CLEARANCE"
     DEFENSE_RELATED = "DEFENSE_RELATED"
@@ -248,6 +257,10 @@ class RedFlagScanner:
         """Return stable, explainable flags in documented policy order."""
 
         hard_flags: list[RedFlag] = []
+        if is_internship(posting.title, posting.employment_type):
+            hard_flags.append(_hard_flag(
+                RedFlagCode.INTERNSHIP, "Internships are excluded.", posting.title
+            ))
         no_sponsorship_found = False
 
         if posting.sponsorship_status is SponsorshipStatus.NO:

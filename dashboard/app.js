@@ -1,5 +1,7 @@
 "use strict";
 
+setInterval(() => { if (!document.hidden) loadJobs(); }, 300000);
+
 const state = { jobs: [], status: "ALL", search: "", activeOutreachJobId: null };
 const jobsElement = document.getElementById("jobs");
 const notice = document.getElementById("notice");

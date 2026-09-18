@@ -21,7 +21,7 @@ from backend.location_policy import (
     is_us_based,
     us_location_sort_key,
 )
-from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus
+from backend.red_flag_scanner import JobPostingFacts, SponsorshipStatus, is_internship
 from backend.scoring_engine import ScoringResult
 
 TRACKING_QUERY_PREFIXES = ("utm_",)
@@ -351,7 +351,7 @@ async def list_availability_check_candidates(
                   availability_checked_at IS NULL
                   OR datetime(availability_checked_at) <= datetime('now', ?)
               )
-            ORDER BY overall_score DESC, last_seen_at DESC, id DESC
+            ORDER BY availability_checked_at ASC, overall_score DESC, id ASC
             LIMIT ?
             """,
             (f"-{minimum_age_hours} hours", limit),
@@ -585,7 +585,7 @@ async def list_jobs(
 ) -> tuple[StoredJob, ...]:
     query = """
         SELECT id, source, url, title, company, location, workplace_type,
-               description, valid_through, closed_at, overall_score, score_details,
+               description, employment_type, valid_through, closed_at, overall_score, score_details,
                status, skip_reason, first_discovered_at, last_seen_at, updated_at
         FROM jobs
     """
@@ -598,7 +598,8 @@ async def list_jobs(
     async with database_connection(database_path) as connection:
         cursor = await connection.execute(query, parameters)
         rows = await cursor.fetchall()
-    rows = [row for row in rows if not _row_is_closed(row)]
+    rows = [row for row in rows if not _row_is_closed(row)
+            and not is_internship(row["title"], row["employment_type"])]
     if us_only:
         rows = [
             row
@@ -648,6 +649,8 @@ async def list_pending_digest_jobs(
 
     pending = []
     for row in rows:
+        if is_internship(row["title"], row["employment_type"]):
+            continue
         if not row["description"] or not row["score_details"]:
             continue
         if _row_is_closed(row):

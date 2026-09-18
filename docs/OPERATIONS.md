@@ -1,5 +1,45 @@
 # Operating JobRadar
 
+## Discovery preferences and monthly outlook
+
+Intern/internship (including "intership") title or employment-type labels are
+excluded before scoring, from existing dashboard records, and from future digests.
+Descriptions mentioning mentoring interns do not trigger this rule.
+
+Broad Brave discovery requests the last 24 hours of page freshness. This is not
+proof of a job's original posting date. Direct ATS candidates prioritize location
+(LA, US remote, California, East Coast, rest of US), then known recent dates and
+configured priority companies. Unknown dates and older open roles remain eligible.
+Greenhouse update timestamps are not treated as publication dates. Applicant
+counts are unavailable in the current feeds; no under-ten applicant guarantee is
+made and unknown counts do not exclude roles. The daily Apple official-domain
+search remains enabled; the LA query includes Culver City and Irvine.
+
+While the production API runs, availability sweeps run every 15 minutes, checking
+up to 40 roles last checked at least two hours ago, oldest check first. The normal
+scheduled discovery audit also remains active. Confirmed closed/expired roles
+disappear automatically; access errors do not prove closure. Dashboard lists
+refresh every five minutes while visible. A large backlog needs multiple sweeps.
+
+Scoring retains the configured model and complete evidence. Compact JSON and a
+stable resume prefix reduce overhead and allow provider implicit caching when
+eligible. A bounded in-memory cache reuses exact successful assessments within
+the same process; changes to model, job, or resume invalidate the key. It resets
+on restart. Token usage is logged without prompts under "Gemini scoring".
+No savings percentage or unchanged numeric score is guaranteed.
+
+Open **Open monthly plan** above the dashboard filters to visit `/dashboard/outlook.html`.
+The separate page matches the dashboard theme and ranks five activities by speed
+to act, with concrete steps, effort, deliverables, and expandable evidence.
+Related experience requirements are grouped into one activity; model observations
+are distinguished from suggested resume/portfolio checks. No model calls are used.
+The supporting evidence offers a rolling 30-day view:
+average dimensions, policy signals, recurring missing requirements, example
+roles, and a four-week evidence-building plan. This uses stored results and no
+additional model calls. It includes closed/applied roles for retrospective
+analysis, excludes internships and non-US roles, and does not predict callbacks.
+Only add skills or accomplishments to a resume after actually demonstrating them.
+
 ## Start and stop
 
 Start the loopback service:

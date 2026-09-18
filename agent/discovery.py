@@ -40,6 +40,8 @@ from backend.job_store import (
     weekly_missing_skills,
 )
 from backend.location_policy import is_us_based, us_location_sort_key
+from backend.red_flag_scanner import is_internship
+from backend.discovery_priority import priority_key
 from backend.resume_store import (
     AUTO_PROFILE_ID,
     ResumeCatalog,
@@ -168,7 +170,7 @@ class DiscoveryAgent:
             except Exception as error:
                 errors.append(f"Search query {query!r} failed: {error}")
                 continue
-            result_groups.append(results)
+            result_groups.append(tuple(sorted(results, key=priority_key)))
 
         # Interleave queries so a shared scoring ceiling cannot let the first
         # role family, location, or priority company starve every later query.
@@ -183,6 +185,9 @@ class DiscoveryAgent:
                     duplicates += 1
                     continue
                 seen_urls.add(search_result.url)
+                if is_internship(search_result.title):
+                    rejected += 1
+                    continue
 
                 try:
                     posting = await self.extractor.fetch(search_result)
@@ -201,6 +206,9 @@ class DiscoveryAgent:
                     errors.append(str(error))
                     continue
 
+                if is_internship(posting.title, posting.employment_type):
+                    rejected += 1
+                    continue
                 if not is_us_based(
                     posting.location,
                     posting.workplace_type,
